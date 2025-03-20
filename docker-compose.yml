@@ -15,6 +15,7 @@ services:
       - ${HOME}/.blockcast/snowflake:/etc/snowflake
     command: >
       /bin/bash -c "/var/opt/magma/bin/generate_nghttpx_config &&
+      while [ ! -f /var/opt/magma/certs/gateway.crt ]; do echo 'Waiting for gateway to be registered...'; sleep 15; done &&
       /usr/bin/env nghttpx --conf /var/opt/magma/tmp/nghttpx.conf"
 
   blockcastd:
