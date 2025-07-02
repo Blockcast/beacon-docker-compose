@@ -5,7 +5,8 @@ x-service: &service
   volumes:
     - ${HOME}/.blockcast/certs:/var/opt/magma/certs
     - ${HOME}/.blockcast/snowflake:/etc/snowflake
-    - /var/run/docker.sock:/var/run/docker.sock    
+    - /var/run/docker.sock:/var/run/docker.sock
+    - ${PWD}:/compose
   labels:
     - "com.centurylinklabs.watchtower.enable=true"
 
