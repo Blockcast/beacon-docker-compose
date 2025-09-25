@@ -22,38 +22,3 @@ services:
     <<: *service
     container_name: beacond
     command: /usr/bin/beacond -logtostderr=true -v=0
-
-
-  # Optional ATS Relay service with different image - only starts with 'relay-ats' profile
-  relay-ats:
-    container_name: relay-ats
-    restart: always
-    profiles: ["relay-ats"]
-    image: blockcast/ats-standard:9.2.4-0.90fbf13db  # Base Blockcast ATS image
-    domainname: infra.blockcast.dev
-    environment:
-      DEBUG_PORT: '2347'
-    env_file:
-      - variables.env
-    hostname: ${EDGE_HOST}
-    user: "root:root"
-    cap_add:
-      - SYS_ADMIN
-      - SYS_PTRACE
-    deploy:
-      resources:
-        limits:
-          cpus: '${CONTAINER_CPU_LIMIT}'
-          memory: ${CONTAINER_MEMORY_LIMIT}
-        reservations:
-          cpus: '${CONTAINER_CPU_RESERVATION}'
-          memory: ${CONTAINER_MEMORY_RESERVATION}
-    ports:
-      - "0.0.0.0:80:80"
-      - "0.0.0.0:443:443"
-    devices:
-      # Mount raw device file to /var/trafficserver/cache0
-      - ${CACHE0_DEVICE}:/var/trafficserver/cache0:rwm
-    volumes:
-      - ${HOME}/.blockcast/certs:/etc/ssl/magma_certs
-  
