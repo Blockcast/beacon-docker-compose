@@ -1,13 +1,11 @@
 x-service: &service
-  image: blockcast/cdn_gateway_go:${IMAGE_VERSION:-stable}
+  image: blockcast/cdn_gateway_go:latest
   restart: always
-  network_mode: "service:blockcastd"
   volumes:
     - ${HOME}/.blockcast/certs:/var/opt/magma/certs
     - ${HOME}/.blockcast/snowflake:/etc/snowflake
-    - /var/run/docker.sock:/var/run/docker.sock    
-  labels:
-    - "com.centurylinklabs.watchtower.enable=true"
+    - ${HOME}/.blockcast/compose:/etc/magma/compose
+    - /var/run/docker.sock:/var/run/docker.sock
 
 services:
   control_proxy:
@@ -19,16 +17,8 @@ services:
     <<: *service
     container_name: blockcastd
     command: /usr/bin/blockcastd -logtostderr=true -v=0
-    network_mode: bridge
 
   beacond:
     <<: *service
     container_name: beacond
     command: /usr/bin/beacond -logtostderr=true -v=0
-
-  watchtower:
-    image: containrrr/watchtower
-    environment:
-      WATCHTOWER_LABEL_ENABLE: "true"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
