@@ -1,5 +1,5 @@
 x-service: &service
-  image: blockcast/cdn_gateway_go:latest
+  image: blockcast/cdn_gateway_go:stable
   restart: always
   volumes:
     - ${HOME}/.blockcast/certs:/var/opt/magma/certs
