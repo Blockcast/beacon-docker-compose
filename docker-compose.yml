@@ -7,6 +7,36 @@ x-service: &service
     - ${HOME}/.blockcast/compose:/etc/magma/compose
     - /var/run/docker.sock:/var/run/docker.sock
 
+# Base relay service without cache devices
+x-relay-base: &relay-base
+  container_name: relay-ats
+  restart: always
+  image: blockcast/ats-standard:9.2.4-0.90fbf13db
+  domainname: infra.blockcast.dev
+  environment:
+    DEBUG_PORT: '2347'
+  env_file:
+    - variables.env
+  hostname: ${EDGE_HOST:-gw-testec01}
+  user: "root:root"
+  cap_add:
+    - SYS_ADMIN
+    - SYS_PTRACE
+  deploy:
+    resources:
+      limits:
+        cpus: '${CONTAINER_CPU_LIMIT:-4.0}'
+        memory: ${CONTAINER_MEMORY_LIMIT:-8G}
+      reservations:
+        cpus: '${CONTAINER_CPU_RESERVATION:-1.5}'
+        memory: ${CONTAINER_MEMORY_RESERVATION:-2G}
+  ports:
+    - "0.0.0.0:80:80"
+    - "0.0.0.0:443:443"
+  volumes:
+    - ${HOME}/.blockcast/certs:/etc/ssl/magma_certs
+
+
 services:
   control_proxy:
     <<: *service
@@ -22,3 +52,35 @@ services:
     <<: *service
     container_name: beacond
     command: /usr/bin/beacond -logtostderr=true -v=0
+
+
+  # ATS Relay service - use appropriate profile based on needed cache devices
+  # Default relay service without cache devices - use 'relay-ats-nocache' profile
+  relay-ats-nocache:
+    <<: *relay-base
+    profiles: ["relay-ats-nocache"]
+
+  # Relay service with cache0 device - use 'relay-ats-cache0' profile
+  relay-ats-cache0:
+    <<: *relay-base
+    profiles: ["relay-ats-cache0"]
+    devices:
+      - ${CACHE0_DEVICE}:/var/trafficserver/cache0:rwm
+
+  # Relay service with cache0 and cache1 devices - use 'relay-ats-cache01' profile  
+  relay-ats-cache01:
+    <<: *relay-base
+    profiles: ["relay-ats-cache01"]
+    devices:
+      - ${CACHE0_DEVICE}:/var/trafficserver/cache0:rwm
+      - ${CACHE1_DEVICE}:/var/trafficserver/cache1:rwm
+
+  # Relay service with all cache devices - use 'relay-ats-cache012' profile
+  relay-ats-cache012:
+    <<: *relay-base
+    profiles: ["relay-ats-cache012"]
+    devices:
+      - ${CACHE0_DEVICE}:/var/trafficserver/cache0:rwm
+      - ${CACHE1_DEVICE}:/var/trafficserver/cache1:rwm
+      - ${CACHE2_DEVICE}:/var/trafficserver/cache2:rwm
+  
