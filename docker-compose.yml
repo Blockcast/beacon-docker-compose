@@ -10,7 +10,7 @@ x-service: &service
 services:
   control_proxy:
     <<: *service
-    container_name: control_proxy
+    container_name: control-proxy
     command: /usr/bin/control_proxy
 
   blockcastd:
