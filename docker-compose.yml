@@ -1,24 +1,28 @@
 x-service: &service
-  image: blockcast/cdn_gateway_go:latest
+  image: blockcast/cdn_gateway_go:${IMAGE_VERSION:-stable}
   restart: always
   volumes:
+    # Gateway directory structure: $HOME/.blockcast/
+    # Contains: certs/, snowflake/, compose/
     - ${HOME}/.blockcast/certs:/var/opt/magma/certs
     - ${HOME}/.blockcast/snowflake:/etc/snowflake
     - ${HOME}/.blockcast/compose:/etc/magma/compose
     - /var/run/docker.sock:/var/run/docker.sock
+  labels:
+    blockcast.node: "true"
 
 services:
   control_proxy:
     <<: *service
     container_name: control-proxy
-    command: /usr/bin/control_proxy
+    command: control_proxy
 
   blockcastd:
     <<: *service
     container_name: blockcastd
-    command: /usr/bin/blockcastd -logtostderr=true -v=0
+    command: blockcastd -logtostderr=true -v=0
 
   beacond:
     <<: *service
     container_name: beacond
-    command: /usr/bin/beacond -logtostderr=true -v=0
+    command: beacond -logtostderr=true -v=0
