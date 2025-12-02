@@ -16,7 +16,7 @@ x-relay-base: &relay-base
   environment:
     DEBUG_PORT: '2347'
   env_file:
-    - variables.env
+    - .env
   hostname: ${EDGE_HOST:-gw-testec01}
   user: "root:root"
   cap_add:
@@ -54,33 +54,58 @@ services:
     command: /usr/bin/beacond -logtostderr=true -v=0
 
 
+  # Init container for relay-ats services - must complete successfully before relay-ats-* services start
+  relay-ats-init:
+    build:
+      context: .
+      dockerfile: dockerfile-init
+      target: edge
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-almalinux}
+        RHEL_VERSION: ${RHEL_VERSION:-9-minimal}
+    image: blockcast/ats-standard-init:9.2.4-0.90fbf13db
+    container_name: relay-ats-init
+    domainname: infra.blockcast.dev
+    environment:
+      CONTAINER_CACHE0_SIZE_GB: ${CONTAINER_CACHE0_SIZE_GB:-100}
+      CACHE0_ENC_PASSWORD: ${CACHE0_ENC_PASSWORD:-}
+    env_file:
+      - .env
+    user: "root:root"
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+      - SYS_PTRACE
+    devices:
+      - /dev/mapper/control:/dev/mapper/control:rwm
+      - /dev/loop-control:/dev/loop-control:rwm
+    volumes:
+      - shared:/shared
+      - ${HOME}/.blockcast/relaycache:/var/trafficserver/relaycache
+      - /dev/mapper:/dev/mapper
+    restart: "no"
+    profiles: ["relay-ats-nocache", "relay-ats-cache0"]
+
   # ATS Relay service - use appropriate profile based on needed cache devices
   # Default relay service without cache devices - use 'relay-ats-nocache' profile
   relay-ats-nocache:
     <<: *relay-base
     profiles: ["relay-ats-nocache"]
+    depends_on:
+      relay-ats-init:
+        condition: service_completed_successfully
 
   # Relay service with cache0 device - use 'relay-ats-cache0' profile
   relay-ats-cache0:
     <<: *relay-base
     profiles: ["relay-ats-cache0"]
+    depends_on:
+      relay-ats-init:
+        condition: service_completed_successfully
     devices:
       - ${CACHE0_DEVICE}:/var/trafficserver/cache0:rwm
 
-  # Relay service with cache0 and cache1 devices - use 'relay-ats-cache01' profile  
-  relay-ats-cache01:
-    <<: *relay-base
-    profiles: ["relay-ats-cache01"]
-    devices:
-      - ${CACHE0_DEVICE}:/var/trafficserver/cache0:rwm
-      - ${CACHE1_DEVICE}:/var/trafficserver/cache1:rwm
 
-  # Relay service with all cache devices - use 'relay-ats-cache012' profile
-  relay-ats-cache012:
-    <<: *relay-base
-    profiles: ["relay-ats-cache012"]
-    devices:
-      - ${CACHE0_DEVICE}:/var/trafficserver/cache0:rwm
-      - ${CACHE1_DEVICE}:/var/trafficserver/cache1:rwm
-      - ${CACHE2_DEVICE}:/var/trafficserver/cache2:rwm
+volumes:
+  shared:
   
