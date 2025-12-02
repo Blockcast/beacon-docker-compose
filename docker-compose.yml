@@ -9,7 +9,7 @@ x-service: &service
 
 # Base relay service without cache devices
 x-relay-base: &relay-base
-  container_name: relay-ats
+  container_name: relayats
   restart: always
   image: blockcast/ats-standard:9.2.4-0.90fbf13db
   domainname: infra.blockcast.dev
@@ -55,7 +55,7 @@ services:
 
 
   # Init container for relay-ats services - must complete successfully before relay-ats-* services start
-  relay-ats-init:
+  relayatsinit:
     build:
       context: .
       dockerfile: dockerfile-init
@@ -64,7 +64,7 @@ services:
         BASE_IMAGE: ${BASE_IMAGE:-almalinux}
         RHEL_VERSION: ${RHEL_VERSION:-9-minimal}
     image: blockcast/ats-standard-init:9.2.4-0.90fbf13db
-    container_name: relay-ats-init
+    container_name: relayatsinit
     domainname: infra.blockcast.dev
     environment:
       CONTAINER_CACHE0_SIZE_GB: ${CONTAINER_CACHE0_SIZE_GB:-100}
@@ -84,23 +84,23 @@ services:
       - ${HOME}/.blockcast/relaycache:/var/trafficserver/relaycache
       - /dev/mapper:/dev/mapper
     restart: "no"
-    profiles: ["relay-ats-nocache", "relay-ats-cache0"]
+    profiles: ["relayatsnocache", "relayats"]
 
   # ATS Relay service - use appropriate profile based on needed cache devices
   # Default relay service without cache devices - use 'relay-ats-nocache' profile
-  relay-ats-nocache:
+  relayatsnocache:
     <<: *relay-base
-    profiles: ["relay-ats-nocache"]
+    profiles: ["relayatsnocache"]
     depends_on:
-      relay-ats-init:
+      relayatsinit:
         condition: service_completed_successfully
 
-  # Relay service with cache0 device - use 'relay-ats-cache0' profile
-  relay-ats-cache0:
+  # Relay service with cache0 device - use 'relayats' profile
+  relayats:
     <<: *relay-base
-    profiles: ["relay-ats-cache0"]
+    profiles: ["relayats"]
     depends_on:
-      relay-ats-init:
+      relayatsinit:
         condition: service_completed_successfully
     devices:
       - ${CACHE0_DEVICE}:/var/trafficserver/cache0:rwm
