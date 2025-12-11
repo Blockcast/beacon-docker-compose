@@ -12,7 +12,7 @@ x-service: &service
     blockcast.node: "true"
 
 services:
-  control_proxy:
+  control-proxy:
     <<: *service
     container_name: control-proxy
     command: control_proxy
@@ -20,9 +20,9 @@ services:
   blockcastd:
     <<: *service
     container_name: blockcastd
-    command: blockcastd -logtostderr=true -v=0
+    command: /usr/bin/blockcastd -logtostderr=true -v=0
 
   beacond:
     <<: *service
     container_name: beacond
-    command: beacond -logtostderr=true -v=0
+    command: /usr/bin/beacond -logtostderr=true -v=0
