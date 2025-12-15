@@ -1,9 +1,7 @@
 x-service: &service
-  image: blockcast/cdn_gateway_go:${IMAGE_VERSION:-stable}
+  image: blockcast/cdn_gateway_go:stable
   restart: always
   volumes:
-    # Gateway directory structure: $HOME/.blockcast/
-    # Contains: certs/, snowflake/, compose/
     - ${HOME}/.blockcast/certs:/var/opt/magma/certs
     - ${HOME}/.blockcast/snowflake:/etc/snowflake
     - ${HOME}/.blockcast/compose:/etc/magma/compose
