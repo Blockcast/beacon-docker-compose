@@ -9,6 +9,36 @@ x-service: &service
   labels:
     blockcast.node: "true"
 
+# Base relay service without cache devices
+x-relay-base: &relay-base
+  container_name: relayats
+  restart: always
+  image: blockcast/ats-standard:9.2.4-0.90fbf13db
+  domainname: infra.blockcast.dev
+  environment:
+    DEBUG_PORT: '2347'
+  env_file:
+    - .env
+  hostname: ${EDGE_HOST:-gw-testec01}
+  user: "root:root"
+  cap_add:
+    - SYS_ADMIN
+    - SYS_PTRACE
+  deploy:
+    resources:
+      limits:
+        cpus: '${CONTAINER_CPU_LIMIT:-4.0}'
+        memory: ${CONTAINER_MEMORY_LIMIT:-8G}
+      reservations:
+        cpus: '${CONTAINER_CPU_RESERVATION:-1.5}'
+        memory: ${CONTAINER_MEMORY_RESERVATION:-2G}
+  ports:
+    - "0.0.0.0:80:80"
+    - "0.0.0.0:443:443"
+  volumes:
+    - ${HOME}/.blockcast/certs:/etc/ssl/magma_certs
+
+
 services:
   control-proxy:
     <<: *service
@@ -24,3 +54,60 @@ services:
     <<: *service
     container_name: beacond
     command: /usr/bin/beacond -logtostderr=true -v=0
+
+
+  # Init container for relay-ats services - must complete successfully before relay-ats-* services start
+  relayatsinit:
+    build:
+      context: .
+      dockerfile: dockerfile-init
+      target: edge
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-almalinux}
+        RHEL_VERSION: ${RHEL_VERSION:-9-minimal}
+    image: blockcast/ats-standard-init:9.2.4-0.90fbf13db
+    container_name: relayatsinit
+    domainname: infra.blockcast.dev
+    environment:
+      CONTAINER_CACHE0_SIZE_GB: ${CONTAINER_CACHE0_SIZE_GB:-100}
+      CACHE0_ENC_PASSWORD: ${CACHE0_ENC_PASSWORD:-}
+    env_file:
+      - .env
+    user: "root:root"
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+      - SYS_PTRACE
+    devices:
+      - /dev/mapper/control:/dev/mapper/control:rwm
+      - /dev/loop-control:/dev/loop-control:rwm
+    volumes:
+      - shared:/shared
+      - ${HOME}/.blockcast/relaycache:/var/trafficserver/relaycache
+      - /dev/mapper:/dev/mapper
+    restart: "no"
+    profiles: ["relayatsnocache", "relayats"]
+
+  # ATS Relay service - use appropriate profile based on needed cache devices
+  # Default relay service without cache devices - use 'relay-ats-nocache' profile
+  relayatsnocache:
+    <<: *relay-base
+    profiles: ["relayatsnocache"]
+    depends_on:
+      relayatsinit:
+        condition: service_completed_successfully
+
+  # Relay service with cache0 device - use 'relayats' profile
+  relayats:
+    <<: *relay-base
+    profiles: ["relayats"]
+    depends_on:
+      relayatsinit:
+        condition: service_completed_successfully
+    devices:
+      - ${CACHE0_DEVICE}:/var/trafficserver/cache0:rwm
+
+
+volumes:
+  shared:
+  
