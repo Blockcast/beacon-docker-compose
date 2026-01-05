@@ -9,6 +9,11 @@
 #
 # For traffic-router and multicast, see docker-compose.internal.yml
 
+x-postgres-env: &postgres-env
+  POSTGRES_USER: ${POSTGRES_USER:-caddy}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-blockcast}
+  POSTGRES_DB: ${POSTGRES_DB:-multicast}
+
 x-service: &service
   image: blockcast/cdn_gateway_go:stable
   restart: always
@@ -23,6 +28,31 @@ x-service: &service
     managed: "true"
 
 services:
+  # PostgreSQL - shared database for multicast/caddy dynamic service configuration
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: always
+    environment:
+      <<: *postgres-env
+    expose:
+      - "5432"
+    volumes:
+      - ${HOME}/.blockcast/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-caddy} -d $${POSTGRES_DB:-multicast}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      blockcast.node: "true"
+      service.type: "postgres"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
   # Core services - always start
   blockcastd:
     <<: *service
