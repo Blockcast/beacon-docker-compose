@@ -1,6 +1,23 @@
+# CDN Gateway Docker Compose - Minimal Production Configuration
+#
+# Core services start automatically. Dynamic services (trafficserver, traffic-monitor)
+# are managed by blockcastd's compose_manager based on mconfig from controller.
+#
+# Usage:
+#   docker compose up -d                    # Start core services
+#   docker compose --profile managed up -d  # Start all services (for testing)
+#
+# For traffic-router and multicast, see docker-compose.internal.yml
+
+x-postgres-env: &postgres-env
+  POSTGRES_USER: ${POSTGRES_USER:-caddy}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-blockcast}
+  POSTGRES_DB: ${POSTGRES_DB:-multicast}
+
 x-service: &service
   image: blockcast/cdn_gateway_go:stable
   restart: always
+  stop_grace_period: 30s
   volumes:
     - ${HOME}/.blockcast/certs:/var/opt/magma/certs
     - ${HOME}/.blockcast/snowflake:/etc/snowflake
@@ -8,19 +25,133 @@ x-service: &service
     - /var/run/docker.sock:/var/run/docker.sock
   labels:
     blockcast.node: "true"
+    managed: "true"
 
 services:
-  control-proxy:
-    <<: *service
-    container_name: control-proxy
-    command: control_proxy
+  # PostgreSQL - shared database for multicast/caddy dynamic service configuration
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: always
+    environment:
+      <<: *postgres-env
+    expose:
+      - "5432"
+    volumes:
+      - ${HOME}/.blockcast/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-caddy} -d $${POSTGRES_DB:-multicast}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      blockcast.node: "true"
+      service.type: "postgres"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
 
+  # Core services - always start
   blockcastd:
     <<: *service
     container_name: blockcastd
     command: /usr/bin/blockcastd -logtostderr=true -v=0
+    labels:
+      blockcast.node: "true"
+      managed: "true"
+      service.type: "blockcastd"
+
+  control-proxy:
+    <<: *service
+    container_name: control-proxy
+    command: control_proxy
+    profiles: [managed]
+    labels:
+      blockcast.node: "true"
+      managed: "true"
+      service.type: "control_proxy"
 
   beacond:
     <<: *service
     container_name: beacond
     command: /usr/bin/beacond -logtostderr=true -v=0
+    profiles: [managed]
+    labels:
+      blockcast.node: "true"
+      managed: "true"
+      service.type: "beacond"
+
+  # Dynamic services - managed by compose_manager via mconfig
+  trafficserver-init:
+    image: blockcast/ats-init:stable
+    container_name: trafficserver-init
+    profiles: [managed]
+    restart: "no"
+    environment:
+      CONTAINER_CACHE0_SIZE_GB: "${CACHE_SIZE:-100}"
+      CACHE0_ENC_PASSWORD: "${CACHE0_ENC_PASSWORD:-}"
+    cap_add: [SYS_ADMIN, MKNOD, SYS_RAWIO, DAC_READ_SEARCH]
+    security_opt: [apparmor:unconfined]
+    devices:
+      - /dev/mapper/control:/dev/mapper/control:rwm
+      - /dev/loop-control:/dev/loop-control:rwm
+    volumes:
+      - ${HOME}/.blockcast/relaycache:/var/trafficserver/relaycache
+      - /dev/mapper:/dev/mapper
+    labels:
+      blockcast.node: "true"
+      managed: "true"
+      service.type: "trafficserver-init"
+
+  trafficserver:
+    image: blockcast/ats-standard:stable
+    container_name: trafficserver
+    profiles: [managed]
+    restart: always
+    stop_grace_period: 60s
+    user: "root:root"
+    cap_add: [SYS_ADMIN, NET_BIND_SERVICE, CHOWN, SETUID, SETGID]
+    environment:
+      TO_URL: "https://to.infra.blockcast.net"
+    ports:
+      - "80:80"
+      - "443:443"
+    devices:
+      - ${CACHE0_DEVICE:-/dev/mapper/cache0}:/var/trafficserver/cache0:rwm
+    volumes:
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+    depends_on:
+      trafficserver-init:
+        condition: service_completed_successfully
+    labels:
+      blockcast.node: "true"
+      managed: "true"
+      service.type: "cache"
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 8G
+
+  traffic-monitor:
+    image: blockcast/traffic-monitor:stable
+    container_name: traffic-monitor
+    profiles: [managed]
+    restart: always
+    stop_grace_period: 30s
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+    labels:
+      blockcast.node: "true"
+      managed: "true"
+      service.type: "traffic_monitor"
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
