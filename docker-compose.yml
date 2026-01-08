@@ -106,7 +106,7 @@ services:
       service.type: "trafficserver-init"
 
   trafficserver:
-    image: blockcast/ats-standard:stable
+    image: blockcast/ats:stable
     container_name: trafficserver
     profiles: [managed]
     restart: always
