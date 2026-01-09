@@ -15,7 +15,7 @@ x-postgres-env: &postgres-env
   POSTGRES_DB: ${POSTGRES_DB:-multicast}
 
 x-service: &service
-  image: blockcast/cdn_gateway_go:stable
+  image: blockcast/cdn_gateway_go:beta
   restart: always
   stop_grace_period: 30s
   volumes:
@@ -85,7 +85,7 @@ services:
 
   # Dynamic services - managed by compose_manager via mconfig
   trafficserver-init:
-    image: blockcast/ats-init:stable
+    image: blockcast/ats-init:beta
     container_name: trafficserver-init
     profiles: [managed]
     restart: "no"
@@ -106,7 +106,7 @@ services:
       service.type: "trafficserver-init"
 
   trafficserver:
-    image: blockcast/ats:stable
+    image: blockcast/ats:beta
     container_name: trafficserver
     profiles: [managed]
     restart: always
@@ -136,7 +136,7 @@ services:
           memory: 8G
 
   traffic-monitor:
-    image: blockcast/traffic-monitor:stable
+    image: blockcast/traffic-monitor:beta
     container_name: traffic-monitor
     profiles: [managed]
     restart: always
