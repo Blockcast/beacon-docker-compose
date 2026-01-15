@@ -14,8 +14,9 @@ x-postgres-env: &postgres-env
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-blockcast}
   POSTGRES_DB: ${POSTGRES_DB:-multicast}
 
+
 x-service: &service
-  image: blockcast/cdn_gateway_go:beta
+  image: blockcast/cdn_gateway_go:stable
   restart: always
   stop_grace_period: 30s
   volumes:
@@ -53,6 +54,7 @@ services:
           cpus: '1.0'
           memory: 512M
 
+
   # Core services - always start
   blockcastd:
     <<: *service
@@ -85,7 +87,7 @@ services:
 
   # Dynamic services - managed by compose_manager via mconfig
   trafficserver-init:
-    image: blockcast/ats-init:beta
+    image: blockcast/ats-init:stable
     container_name: trafficserver-init
     profiles: [managed]
     restart: "no"
@@ -106,7 +108,7 @@ services:
       service.type: "trafficserver-init"
 
   trafficserver:
-    image: blockcast/ats:beta
+    image: blockcast/ats:stable
     container_name: trafficserver
     profiles: [managed]
     restart: always
@@ -136,7 +138,7 @@ services:
           memory: 8G
 
   traffic-monitor:
-    image: blockcast/traffic-monitor:beta
+    image: blockcast/traffic-monitor:stable
     container_name: traffic-monitor
     profiles: [managed]
     restart: always
