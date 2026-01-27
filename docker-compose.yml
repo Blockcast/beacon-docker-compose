@@ -157,3 +157,34 @@ services:
         limits:
           cpus: '2.0'
           memory: 2G
+
+  # AMT Relay - Automatic Multicast Tunneling (RFC 7450)
+  # Converts multicast traffic to unicast for delivery over unicast infrastructure
+  amt-relay:
+    image: blockcast/amt-relay:stable
+    container_name: amt-relay
+    profiles: [managed]
+    restart: always
+    stop_grace_period: 30s
+    network_mode: host  # Required for multicast traffic handling
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      AMT_RELAY_ADDR: "0.0.0.0"
+      AMT_RELAY_PORT: "2268"
+      AMT_ANYCAST_PREFIX: "192.52.193.0/24"
+      AMT_LOG_LEVEL: "info"
+      AMT_METRICS_ENABLED: "true"
+      AMT_METRICS_PORT: "9090"
+    volumes:
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+    labels:
+      blockcast.node: "true"
+      managed: "true"
+      service.type: "amt_relay"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
