@@ -34,8 +34,8 @@ services:
       managed: "true"
       service.type: "blockcastd"
 
-  # control-proxy: Legacy nghttpx dispatcher (use ingress instead for ATS-based dispatcher)
-  # When ingress is in dynamic_services, blockcastd auto-detects and uses it
+  # control-proxy: Legacy nghttpx dispatcher (cloud mTLS on 8443).
+  # For unified cache + control-proxy use relay: docker-compose.relay.yml (relay-ats, relay-varnish, relay-caddy).
   control-proxy:
     <<: *service
     container_name: control-proxy
@@ -45,42 +45,6 @@ services:
       blockcast.node: "true"
       managed: "true"
       service.type: "control_proxy"
-
-  # ingress: Unified ATS-based ingress (cache + dispatcher on 8443)
-  # Replaces control-proxy when using ATS backend
-  # Add "ingress" to dynamic_services in mconfig to enable
-  ingress:
-    image: blockcast/ats:stable
-    container_name: ingress
-    profiles: [managed]
-    restart: always
-    stop_grace_period: 60s
-    user: "root:root"
-    cap_add: [SYS_ADMIN, NET_BIND_SERVICE, CHOWN, SETUID, SETGID]
-    environment:
-      # ATS dispatcher mode - generates remap.config for cloud routing
-      CONTROL_PROXY_BACKEND: "ats"
-    ports:
-      - "80:80"
-      - "443:443"
-      - "8443:8443"  # Dispatcher port for cloud mTLS
-    devices:
-      - ${CACHE0_DEVICE:-/dev/mapper/cache0}:/var/trafficserver/cache0:rwm
-    volumes:
-      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
-      - /etc/magma:/etc/magma:ro
-    depends_on:
-      trafficserver-init:
-        condition: service_completed_successfully
-    labels:
-      blockcast.node: "true"
-      managed: "true"
-      service.type: "ingress"
-    deploy:
-      resources:
-        limits:
-          cpus: '4.0'
-          memory: 8G
 
   beacond:
     <<: *service
