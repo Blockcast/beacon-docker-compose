@@ -34,7 +34,7 @@ services:
       managed: "true"
       service.type: "blockcastd"
 
-  # control-proxy: Legacy nghttpx dispatcher (cloud mTLS on 8443).
+  # control-proxy: Cloud mTLS dispatcher on 8443.
   # For unified cache + control-proxy use relay: docker-compose.relay.yml (relay-ats, relay-varnish, relay-caddy).
   control-proxy:
     <<: *service
