@@ -1,0 +1,335 @@
+# RELAY Gateway - CDN Cache with DNS forwarding
+# Extension of docker-compose.yml: relay cache, Traffic Router/Monitor, AMT, MoQ, multicast.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.relay.yml --profile <backend> up
+#   Backends: ats (default), varnish, caddy
+
+# -- Shared fragments --------------------------------------------------------
+
+# Common environment for Traffic Ops-connected services
+x-relay-env: &relay-env
+  TO_URL: ${TO_URL:-https://to.infra.blockcast.net}
+  TLD_DOMAIN: ${TLD_DOMAIN:-test.bcast.id}
+  CDN_NAME: ${CDN_NAME:-public}
+
+# Common labels for all relay-managed services
+x-labels: &labels
+  blockcast.node: "true"
+  managed: "true"
+
+# Shared cache backend config (ATS, Varnish, Caddy all share this)
+x-relay-cache: &relay-cache
+  container_name: relay
+  hostname: relay
+  restart: unless-stopped
+  networks:
+    relay:
+      aliases:
+        - control-proxy
+  ports:
+    - "80:80"
+    - "443:443"
+  expose:
+    - "8443"
+  labels:
+    <<: *labels
+    service.type: "relay"
+
+# Shared defaults for managed (non-cache) relay services
+x-managed: &managed
+  restart: unless-stopped
+  profiles: [managed]
+  depends_on:
+    - blockcastd
+
+# -- Services ----------------------------------------------------------------
+
+services:
+  # ==========================================================================
+  # GATEWAY CORE OVERRIDES (add relay network)
+  # ==========================================================================
+  blockcastd:
+    networks:
+      - relay
+
+  # When relay cache is running, it aliases as "control-proxy" on the relay network.
+  # When relay is NOT enabled (standalone control-proxy mode), the base control-proxy
+  # service still needs to be on the relay network so blockcastd can reach it.
+  control-proxy:
+    networks:
+      - relay
+
+  beacond:
+    networks:
+      - relay
+
+  # ==========================================================================
+  # CACHE INIT (LUKS encrypted storage)
+  # ==========================================================================
+  cache-init:
+    image: ${DOCKER_REGISTRY:-blockcast}/cache-init:${IMAGE_VERSION:-stable}
+    container_name: relay-cache-init
+    hostname: cache-init
+    networks:
+      - relay
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+      - MKNOD
+      - SYS_RAWIO
+      - DAC_READ_SEARCH
+    security_opt:
+      - apparmor:unconfined
+    devices:
+      - /dev/mapper/control:/dev/mapper/control:rwm
+      - /dev/loop-control:/dev/loop-control:rwm
+    volumes:
+      - ${CACHE_DIR:-${HOME}/.blockcast/relaycache}:/var/trafficserver/relaycache
+      - /dev/mapper:/dev/mapper
+      - cache-shared:/shared
+    environment:
+      CACHE_SIZE_GB: ${CACHE_SIZE_GB:-100}
+      CACHE0_ENC_PASSWORD: ${CACHE0_ENC_PASSWORD:-}
+      CACHE_DEVICE_NAME: cache0
+    restart: "no"
+    profiles:
+      - ats
+      - relay
+      - luks
+
+  # ==========================================================================
+  # RELAY CACHE BACKENDS (select via --profile)
+  # ==========================================================================
+
+  # ATS backend (--profile ats or --profile relay)
+  relay:
+    <<: *relay-cache
+    image: ${DOCKER_REGISTRY:-blockcast}/relay-ats:${IMAGE_VERSION:-stable}
+    cap_add:
+      - SYS_ADMIN
+      - NET_BIND_SERVICE
+    volumes:
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+      - ${CACHE_DIR:-${HOME}/.blockcast/relaycache}:/var/trafficserver/relaycache
+      - cache-shared:/shared
+    devices:
+      - ${CACHE0_DEVICE:-/dev/mapper/cache0}:/var/trafficserver/cache0:rwm
+    environment:
+      <<: *relay-env
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/_health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      cache-init:
+        condition: service_completed_successfully
+    profiles:
+      - ats
+      - relay
+
+  # Varnish backend (--profile varnish)
+  relay-varnish:
+    <<: *relay-cache
+    image: ${DOCKER_REGISTRY:-blockcast}/relay-varnish:${IMAGE_VERSION:-stable}
+    volumes:
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+      - relay-vcl:/opt/varnish/var/vcl:ro
+    environment:
+      <<: *relay-env
+      VCL_FILE: /etc/varnish/default.vcl
+      VARNISH_STORAGE: malloc,1g
+    profiles:
+      - varnish
+
+  # Caddy backend (--profile caddy or --profile multicast)
+  relay-caddy:
+    <<: *relay-cache
+    image: ${DOCKER_REGISTRY:-blockcast}/relay-caddy:${IMAGE_VERSION:-stable}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+    environment:
+      <<: *relay-env
+      CADDY_ADMIN: ""
+      DB_FILE: "postgresql://${POSTGRES_USER:-caddy}:${POSTGRES_PASSWORD:-blockcast}@host.docker.internal:5432/${POSTGRES_DB:-multicast}"
+    depends_on:
+      - postgres
+    profiles:
+      - caddy
+      - multicast
+
+  # ==========================================================================
+  # MANAGED RELAY SERVICES
+  # ==========================================================================
+
+  # Traffic Router - Authoritative DNS for *.bcast.id
+  # Port 53: Public DNS (NO mTLS)
+  # Port 3333/3443: TR API (WITH mTLS - internal only, via relay bridge)
+  traffic-router:
+    <<: *managed
+    image: ${DOCKER_REGISTRY:-blockcast}/traffic-router:${IMAGE_VERSION:-stable}
+    container_name: relay-traffic-router
+    hostname: traffic-router
+    networks:
+      - relay
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+    volumes:
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+      - ${HOME}/.blockcast/certs:/etc/pki/tls:ro
+    environment:
+      tr_traffic_ops_url: ${TO_URL:-https://to.infra.blockcast.net}
+      tr_cdn_name: ${CDN_NAME:-public}
+      tr_traffic_ops_insecure: "false"
+      tr_traffic_ops_client_cert_file: "/var/opt/magma/certs/gateway.crt"
+      tr_traffic_ops_client_key_file: "/var/opt/magma/certs/gateway.key"
+      tr_traffic_ops_username: ""
+      tr_traffic_ops_password: ""
+      #tr_traffic_monitor_hosts: ${TR_TRAFFIC_MONITOR_HOSTS:-traffic-monitor:80}
+    labels:
+      <<: *labels
+      service.type: "traffic-router"
+    depends_on:
+      - blockcastd
+      - traffic-monitor
+
+  # Traffic Monitor - Cache health monitoring (internal only)
+  traffic-monitor:
+    <<: *managed
+    image: ${DOCKER_REGISTRY:-blockcast}/traffic-monitor:${IMAGE_VERSION:-stable}
+    container_name: relay-traffic-monitor
+    hostname: traffic-monitor
+    networks:
+      - relay
+    expose:
+      - "80"
+    volumes:
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+      - ${HOME}/.blockcast/certs:/etc/pki/tls:ro
+    environment:
+      TO_URL: ${TO_URL:-https://to.infra.blockcast.net}
+      TO_CDN_NAME: ${CDN_NAME:-public}
+      TO_INSECURE: "false"
+      TO_CLIENT_CERT_FILE: "/var/opt/magma/certs/gateway.crt"
+      TO_CLIENT_KEY_FILE: "/var/opt/magma/certs/gateway.key"
+    labels:
+      <<: *labels
+      service.type: "traffic-monitor"
+
+  # PostgreSQL - shared database for multicast/caddy
+  postgres:
+    image: postgres:16-alpine
+    container_name: relay-postgres
+    hostname: postgres
+    profiles: [managed]
+    networks:
+      - relay
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-caddy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-blockcast}
+      POSTGRES_DB: ${POSTGRES_DB:-multicast}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-caddy} -d $${POSTGRES_DB:-multicast}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      <<: *labels
+      service.type: "postgres"
+    restart: unless-stopped
+
+  # AMT Relay - Automatic Multicast Tunneling (RFC 7450)
+  amt-relay:
+    <<: *managed
+    image: ${DOCKER_REGISTRY:-blockcast}/amtr:${IMAGE_VERSION:-stable}
+    container_name: relay-amt-relay
+    hostname: amt-relay
+    network_mode: host
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+    environment:
+      AMT_RELAY_ADDR: "0.0.0.0"
+      AMT_RELAY_PORT: "2268"
+      AMT_ANYCAST_PREFIX: ${AMT_ANYCAST_PREFIX:-192.52.193.0/24}
+      AMT_LOG_LEVEL: ${AMT_LOG_LEVEL:-info}
+    labels:
+      <<: *labels
+      service.type: "amt-relay"
+
+  # MoQ Relay - Media over QUIC (internal only, reached via relay ALPN on :443)
+  moq-relay:
+    <<: *managed
+    image: ${DOCKER_REGISTRY:-blockcast}/moq-relay:${IMAGE_VERSION:-stable}
+    container_name: relay-moq-relay
+    hostname: moq-relay
+    networks:
+      - relay
+    expose:
+      - "4443/udp"
+      - "4444"
+    volumes:
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # RKS (Remote Key Server) - fetches TLS certs for DS FQDNs
+      # Uses gateway mTLS certs for authentication (no group token needed)
+      RKS_URL: ${RKS_URL:-}
+      RKS_NODE_ID: ${RKS_NODE_ID:-}
+      RKS_MTLS_CERT: ${RKS_MTLS_CERT:-/var/opt/magma/certs/gateway.crt}
+      RKS_MTLS_KEY: ${RKS_MTLS_KEY:-/var/opt/magma/certs/gateway.key}
+      RKS_MTLS_CA: ${RKS_MTLS_CA:-/var/opt/magma/certs/rootCA.pem}
+      RKS_INSECURE_TLS: ${RKS_INSECURE_TLS:-false}
+      RKS_FQDNS: ${RKS_FQDNS:-}
+      # Upstream forwarding (edge relay → origin relay via TO discovery)
+      # Set RELAY_TO_URL to enable upstream forwarding to parent relay
+      RELAY_TO_URL: ${RELAY_TO_URL:-}
+      RELAY_TO_CERT: ${RELAY_TO_CERT:-/var/opt/magma/certs/controller.crt}
+      RELAY_TO_KEY: ${RELAY_TO_KEY:-/var/opt/magma/certs/controller.key}
+      RELAY_TO_INSECURE: ${RELAY_TO_INSECURE:-false}
+      RELAY_HOSTNAME: ${RELAY_HOSTNAME:-}
+    labels:
+      <<: *labels
+      service.type: "moq-relay"
+
+  # Multicast - MAHP receiver/sender (standalone for ATS/Varnish backends)
+  # When caddy backend is active, multicast is absorbed into relay-caddy via profiles
+  multicast:
+    <<: *managed
+    image: ${DOCKER_REGISTRY:-blockcast}/multicast:${IMAGE_VERSION:-stable}
+    container_name: relay-multicast
+    hostname: multicast
+    network_mode: host
+    volumes:
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+    environment:
+      DB_FILE: "postgresql://${POSTGRES_USER:-caddy}:${POSTGRES_PASSWORD:-blockcast}@127.0.0.1:5432/${POSTGRES_DB:-multicast}"
+      TO_URL: ${TO_URL:-https://to.infra.blockcast.net}
+    labels:
+      <<: *labels
+      service.type: "multicast"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  relay:
+    name: relay-network
+    driver: bridge
+
+volumes:
+  cache-shared:
+  relay-vcl:
+  postgres-data:
