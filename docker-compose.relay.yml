@@ -185,6 +185,7 @@ services:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
       - ${HOME}/.blockcast/certs:/etc/pki/tls:ro
       - ${HOME}/.blockcast/certs/certifier.pem:/etc/magma/certs/rootCA.pem:ro
+      - tr-db:/opt/traffic_router/db
     environment:
       tr_traffic_ops_url: ${TO_URL:-https://to.infra.blockcast.net}
       tr_cdn_name: ${CDN_NAME:-public}
@@ -338,3 +339,4 @@ volumes:
   cache-shared:
   relay-vcl:
   postgres-data:
+  tr-db:
