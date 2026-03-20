@@ -13,6 +13,9 @@ x-service: &service
   image: blockcast/cdn_gateway_go:stable
   restart: always
   stop_grace_period: 30s
+  # Docker socket GID must match container's blockcast group (999)
+  group_add:
+    - ${DOCKER_GID:-999}
   volumes:
     - ${HOME}/.blockcast/certs:/var/opt/magma/certs
     - ${HOME}/.blockcast/snowflake:/etc/snowflake
