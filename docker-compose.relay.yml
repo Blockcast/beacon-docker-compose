@@ -184,7 +184,7 @@ services:
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
       - ${HOME}/.blockcast/certs:/etc/pki/tls:ro
-      - ${HOME}/.blockcast/certs/certifier.pem:/etc/magma/certs/rootCA.pem:ro
+      # rootCA.pem is baked into the image at /etc/magma/certs/ (BUILD_ENV-specific)
       - tr-db:/opt/traffic_router/db
     environment:
       tr_traffic_ops_url: ${TO_URL:-https://to.infra.blockcast.net}
