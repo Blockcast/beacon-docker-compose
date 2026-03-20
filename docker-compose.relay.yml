@@ -194,7 +194,8 @@ services:
       tr_traffic_ops_client_key_file: "/var/opt/magma/certs/gateway.key"
       tr_traffic_ops_username: ""
       tr_traffic_ops_password: ""
-      #tr_traffic_monitor_hosts: ${TR_TRAFFIC_MONITOR_HOSTS:-traffic-monitor:80}
+      tr_traffic_monitor_hosts: ${TR_TRAFFIC_MONITOR_HOSTS:-traffic-monitor:443}
+      tr_tm_ssl_insecure: "true"
     labels:
       <<: *labels
       service.type: "traffic-router"
