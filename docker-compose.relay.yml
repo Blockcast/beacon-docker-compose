@@ -184,7 +184,7 @@ services:
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
       - ${HOME}/.blockcast/certs:/etc/pki/tls:ro
-      - ${HOME}/.blockcast/certs/certifier.pem:/etc/magma/certs/rootCA.pem:ro
+      # rootCA.pem is baked into the image at /etc/magma/certs/ (BUILD_ENV-specific)
       - tr-db:/opt/traffic_router/db
     environment:
       tr_traffic_ops_url: ${TO_URL:-https://to.infra.blockcast.net}
@@ -196,6 +196,7 @@ services:
       tr_traffic_ops_password: ""
       tr_traffic_monitor_hosts: ${TR_TRAFFIC_MONITOR_HOSTS:-traffic-monitor:443}
       tr_tm_ssl_insecure: "true"
+      TRAFFIC_MONITOR_BOOTSTRAP_LOCAL: "true"
     labels:
       <<: *labels
       service.type: "traffic-router"
