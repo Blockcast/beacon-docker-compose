@@ -174,13 +174,11 @@ services:
     image: ${DOCKER_REGISTRY:-blockcast}/traffic-router:${IMAGE_VERSION:-stable}
     container_name: relay-traffic-router
     hostname: traffic-router
-    cap_add:
-      - NET_BIND_SERVICE
     networks:
       - relay
     ports:
-      - "53:53/tcp"
-      - "53:53/udp"
+      - "53:5353/tcp"
+      - "53:5353/udp"
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
       - ${HOME}/.blockcast/certs:/etc/pki/tls:ro
@@ -194,8 +192,7 @@ services:
       tr_traffic_ops_client_key_file: "/var/opt/magma/certs/gateway.key"
       tr_traffic_ops_username: ""
       tr_traffic_ops_password: ""
-      tr_traffic_monitor_hosts: ${TR_TRAFFIC_MONITOR_HOSTS:-traffic-monitor:443}
-      tr_tm_ssl_insecure: "true"
+      tr_traffic_monitor_hosts: ${TR_TRAFFIC_MONITOR_HOSTS:-}
     labels:
       <<: *labels
       service.type: "traffic-router"
