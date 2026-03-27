@@ -269,6 +269,17 @@ services:
       AMT_RELAY_PORT: "2268"
       AMT_ANYCAST_PREFIX: ${AMT_ANYCAST_PREFIX:-192.52.193.0/24}
       AMT_LOG_LEVEL: ${AMT_LOG_LEVEL:-info}
+      # Juniper MX gNMI (optional — set AMT_RELAY_TYPE=juniper to enable)
+      AMT_RELAY_TYPE: ${AMT_RELAY_TYPE:-linux}
+      GNMI_TARGET: ${GNMI_TARGET:-}
+      GNMI_AUTH_MODE: ${GNMI_AUTH_MODE:-tls}
+      GNMI_USERNAME: ${GNMI_USERNAME:-}
+      GNMI_PASSWORD: ${GNMI_PASSWORD:-}
+      GNMI_TLS_CERT: /var/opt/magma/certs/gateway.crt
+      GNMI_TLS_KEY: /var/opt/magma/certs/gateway.key
+      GNMI_TLS_SKIP_VERIFY: ${GNMI_TLS_SKIP_VERIFY:-true}
+      JUNIPER_RELAY_IP: ${JUNIPER_RELAY_IP:-}
+      IPFIX_PORT: ${IPFIX_PORT:-4739}
     labels:
       <<: *labels
       service.type: "amt-relay"
