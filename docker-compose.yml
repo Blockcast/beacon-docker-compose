@@ -13,14 +13,14 @@ x-service: &service
   image: blockcast/cdn_gateway_go:stable
   restart: always
   stop_grace_period: 30s
-  # Docker socket GID must match container's blockcast group (999)
-  group_add:
-    - ${DOCKER_GID:-999}
   volumes:
     - ${HOME}/.blockcast/certs:/var/opt/magma/certs
     - ${HOME}/.blockcast/snowflake:/etc/snowflake
     - ${HOME}/.blockcast/compose:/etc/magma/compose
     - /var/run/docker.sock:/var/run/docker.sock
+    # Named volume: Docker copies image content (bin/, protos/) on first create.
+    # K8s PVCs do NOT — use subPath mounts in helm template instead.
+    - blockcastd-data:/var/opt/magma
   labels:
     blockcast.node: "true"
     managed: "true"
@@ -62,3 +62,6 @@ services:
   # Dynamic relay services (cache, TR, TM, AMT, MoQ, multicast) are defined
   # in docker-compose.relay.yml with profile-based backend selection.
   # Use: docker compose -f docker-compose.yml -f docker-compose.relay.yml --profile <backend> up
+
+volumes:
+  blockcastd-data:
