@@ -334,6 +334,7 @@ networks:
     driver: bridge
 
 volumes:
+  blockcastd-data:
   cache-shared:
   relay-vcl:
   postgres-data:
