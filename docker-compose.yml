@@ -18,6 +18,8 @@ x-service: &service
     - ${HOME}/.blockcast/snowflake:/etc/snowflake
     - ${HOME}/.blockcast/compose:/etc/magma/compose
     - /var/run/docker.sock:/var/run/docker.sock
+    # Named volume: Docker copies image content (bin/, protos/) on first create.
+    # K8s PVCs do NOT — use subPath mounts in helm template instead.
     - blockcastd-data:/var/opt/magma
   labels:
     blockcast.node: "true"
