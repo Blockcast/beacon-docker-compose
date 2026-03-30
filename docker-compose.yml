@@ -13,6 +13,11 @@ x-service: &service
   image: blockcast/cdn_gateway_go:stable
   restart: always
   stop_grace_period: 30s
+  # No "user:" — entrypoint runs as root, chowns mounted volumes to match the
+  # container's blockcast user, then drops privileges via gosu.
+  # This handles arbitrary host UIDs (the host may not even have a blockcast user).
+  group_add:
+    - ${DOCKER_GID:-999}
   volumes:
     - ${HOME}/.blockcast/certs:/var/opt/magma/certs
     - ${HOME}/.blockcast/snowflake:/etc/snowflake
