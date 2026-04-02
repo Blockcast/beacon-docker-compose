@@ -113,6 +113,7 @@ services:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
       - ${CACHE_DIR:-${HOME}/.blockcast/relaycache}:/var/trafficserver/relaycache
       - cache-shared:/shared
+      - ${MAXMIND_DB_PATH:-/var/opt/magma/maxmind}:/var/opt/magma/maxmind:ro
     devices:
       - ${CACHE0_DEVICE:-/dev/mapper/cache0}:/var/trafficserver/cache0:rwm
     environment:
@@ -137,6 +138,7 @@ services:
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
       - relay-vcl:/opt/varnish/var/vcl:ro
+      - ${MAXMIND_DB_PATH:-/var/opt/magma/maxmind}:/var/opt/magma/maxmind:ro
     environment:
       <<: *relay-env
       VCL_FILE: /etc/varnish/default.vcl
@@ -152,6 +154,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+      - ${MAXMIND_DB_PATH:-/var/opt/magma/maxmind}:/var/opt/magma/maxmind:ro
     environment:
       <<: *relay-env
       CADDY_ADMIN: ""
@@ -161,6 +164,55 @@ services:
     profiles:
       - caddy
       - multicast
+
+  # ==========================================================================
+  # MAXMIND ASN DATABASE SYNC
+  # ==========================================================================
+
+  # Fetches GeoLite2-ASN.mmdb from orc8r for per-ASN bandwidth tracking.
+  # Shared hostPath volume mounted read-only by ATS, Varnish, Caddy, TR.
+  maxmind-sync:
+    image: curlimages/curl:latest
+    container_name: maxmind-sync
+    restart: unless-stopped
+    networks:
+      - relay
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        while true; do
+          DEST="/var/opt/magma/maxmind/GeoLite2-ASN.mmdb"
+          URL="$${MAXMIND_SYNC_URL}"
+          if [ -z "$$URL" ]; then echo "MAXMIND_SYNC_URL not set"; sleep 43200; continue; fi
+          mkdir -p /var/opt/magma/maxmind
+          if [ -f "$$DEST" ]; then
+            CODE=$$(curl -sf -o "$$DEST.tmp" -w "%{http_code}" --cacert /var/opt/magma/certs/rootCA.pem --cert /var/opt/magma/certs/gateway.crt --key /var/opt/magma/certs/gateway.key -z "$$DEST" "$$URL" 2>/dev/null || echo "000")
+            if [ "$$CODE" = "304" ]; then rm -f "$$DEST.tmp"; echo "Not modified"; sleep 43200; continue; fi
+          else
+            curl -sf -o "$$DEST.tmp" --cacert /var/opt/magma/certs/rootCA.pem --cert /var/opt/magma/certs/gateway.crt --key /var/opt/magma/certs/gateway.key "$$URL"
+          fi
+          if [ -f "$$DEST.tmp" ] && [ "$$(stat -c%s "$$DEST.tmp" 2>/dev/null || echo 0)" -gt 1000000 ]; then
+            mv "$$DEST.tmp" "$$DEST"; echo "Synced $$(stat -c%s "$$DEST") bytes"
+          else
+            rm -f "$$DEST.tmp"; echo "Download failed or too small"
+          fi
+          sleep 43200
+        done
+    environment:
+      MAXMIND_SYNC_URL: ${MAXMIND_SYNC_URL:-}
+    volumes:
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+      - ${MAXMIND_DB_PATH:-/var/opt/magma/maxmind}:/var/opt/magma/maxmind
+    labels:
+      <<: *labels
+      service.type: "maxmind-sync"
+    profiles:
+      - ats
+      - varnish
+      - caddy
+      - multicast
+      - relay
 
   # ==========================================================================
   # MANAGED RELAY SERVICES
@@ -184,6 +236,7 @@ services:
       - ${HOME}/.blockcast/certs:/etc/pki/tls:ro
       # rootCA.pem is baked into the image at /etc/magma/certs/ (BUILD_ENV-specific)
       - tr-db:/opt/traffic_router/db
+      - ${MAXMIND_DB_PATH:-/var/opt/magma/maxmind}:/var/opt/magma/maxmind:ro
     environment:
       tr_traffic_ops_url: ${TO_URL:-https://to.infra.blockcast.net}
       tr_cdn_name: ${CDN_NAME:-public}
