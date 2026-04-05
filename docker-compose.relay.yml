@@ -48,9 +48,11 @@ x-managed: &managed
 services:
   # ==========================================================================
   # GATEWAY CORE OVERRIDES (add relay network)
+  # Explicit "default" is required — specifying networks: removes the implicit default.
   # ==========================================================================
   blockcastd:
     networks:
+      - default
       - relay
 
   # When relay cache is running, it aliases as "control-proxy" on the relay network.
@@ -58,10 +60,12 @@ services:
   # service still needs to be on the relay network so blockcastd can reach it.
   control-proxy:
     networks:
+      - default
       - relay
 
   beacond:
     networks:
+      - default
       - relay
 
   # ==========================================================================
@@ -396,6 +400,7 @@ networks:
   relay:
     name: relay-network
     driver: bridge
+    enable_ipv6: true
 
 volumes:
   blockcastd-data:
