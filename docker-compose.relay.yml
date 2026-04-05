@@ -403,6 +403,7 @@ networks:
   relay:
     name: relay-network
     driver: bridge
+    enable_ipv6: true
 
 volumes:
   blockcastd-data:

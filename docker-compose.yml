@@ -68,5 +68,9 @@ services:
   # in docker-compose.relay.yml with profile-based backend selection.
   # Use: docker compose -f docker-compose.yml -f docker-compose.relay.yml --profile <backend> up
 
+networks:
+  default:
+    enable_ipv6: true
+
 volumes:
   blockcastd-data:
