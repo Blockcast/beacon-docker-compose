@@ -77,12 +77,11 @@ services:
     hostname: cache-init
     networks:
       - relay
-    privileged: true
+    # Minimal capabilities instead of full privileged (set CACHE_INIT_PRIVILEGED=true to override)
+    privileged: ${CACHE_INIT_PRIVILEGED:-false}
     cap_add:
       - SYS_ADMIN
       - MKNOD
-      - SYS_RAWIO
-      - DAC_READ_SEARCH
     security_opt:
       - apparmor:unconfined
     devices:
@@ -92,10 +91,16 @@ services:
       - ${CACHE_DIR:-${HOME}/.blockcast/relaycache}:/var/trafficserver/relaycache
       - /dev/mapper:/dev/mapper
       - cache-shared:/shared
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
     environment:
+      # RKS-based LUKS key management (no password env var)
+      GATEWAY_ID: ${GATEWAY_ID:-${HOSTNAME}}
+      RKS_URL: ${RKS_URL:-}
+      GW_CERT: /var/opt/magma/certs/gateway.crt
+      GW_KEY: /var/opt/magma/certs/gateway.key
+      ROOT_CA: /var/opt/magma/certs/certifier.pem
       CACHE_SIZE_GB: ${CACHE_SIZE_GB:-100}
-      CACHE0_ENC_PASSWORD: ${CACHE0_ENC_PASSWORD:-}
-      CACHE_DEVICE_NAME: cache0
+      CACHE_PATH: /var/trafficserver/relaycache
     restart: "no"
     profiles:
       - ats
@@ -115,11 +120,12 @@ services:
       - NET_BIND_SERVICE
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+      # Mount the ext4 directory from LUKS, NOT the raw block device.
+      # cache-init formats LUKS, creates ext4, mounts at relaycache/cache.
+      # Relay only sees the decrypted filesystem, not /dev/mapper/cache0.
       - ${CACHE_DIR:-${HOME}/.blockcast/relaycache}:/var/trafficserver/relaycache
       - cache-shared:/shared
       - ${MAXMIND_DB_PATH:-/var/opt/magma/maxmind}:/var/opt/magma/maxmind:ro
-    devices:
-      - ${CACHE0_DEVICE:-/dev/mapper/cache0}:/var/trafficserver/cache0:rwm
     environment:
       <<: *relay-env
     healthcheck:
@@ -249,7 +255,10 @@ services:
       tr_traffic_ops_client_key_file: "/var/opt/magma/certs/gateway.key"
       tr_traffic_ops_username: ""
       tr_traffic_ops_password: ""
-      tr_traffic_monitor_hosts: ${TR_TRAFFIC_MONITOR_HOSTS:-}
+      # Pin TM to Docker service name — CrConfig FQDNs don't resolve in compose
+      tr_traffic_monitor_hosts: ${TR_TRAFFIC_MONITOR_HOSTS:-traffic-monitor:443;}
+      tr_tm_ssl_insecure: "true"
+      tr_tm_bootstrap_local: "true"
     labels:
       <<: *labels
       service.type: "traffic-router"
