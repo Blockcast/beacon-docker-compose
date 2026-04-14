@@ -75,6 +75,8 @@ services:
     image: ${DOCKER_REGISTRY:-blockcast}/cache-init:${IMAGE_VERSION:-stable}
     container_name: relay-cache-init
     hostname: cache-init
+    depends_on:
+      - blockcastd
     networks:
       - relay
     # Minimal capabilities instead of full privileged (set CACHE_INIT_PRIVILEGED=true to override)
@@ -92,6 +94,7 @@ services:
       - /dev/mapper:/dev/mapper
       - cache-shared:/shared
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+      - blockcastd-data:/var/opt/magma:ro
     environment:
       # RKS-based LUKS key management (no password env var)
       GATEWAY_ID: ${GATEWAY_ID:-${HOSTNAME}}
