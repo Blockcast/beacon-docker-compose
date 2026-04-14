@@ -101,7 +101,7 @@ services:
       RKS_URL: ${RKS_URL:-}
       GW_CERT: /var/opt/magma/certs/gateway.crt
       GW_KEY: /var/opt/magma/certs/gateway.key
-      ROOT_CA: /var/opt/magma/certs/certifier.pem
+      ROOT_CA: /etc/ssl/certs/ca-certificates.crt
       CACHE_SIZE_GB: ${CACHE_SIZE_GB:-100}
       CACHE_PATH: /var/trafficserver/relaycache
     restart: "no"
