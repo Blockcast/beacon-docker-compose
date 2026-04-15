@@ -72,7 +72,7 @@ services:
   # CACHE INIT (LUKS encrypted storage)
   # ==========================================================================
   cache-init:
-    image: ${DOCKER_REGISTRY:-blockcast}/cache-init:${IMAGE_VERSION:-stable}
+    image: ${DOCKER_REGISTRY:-blockcast/}cache-init:${CACHE_INIT_IMAGE_TAG:-dev}
     container_name: relay-cache-init
     hostname: cache-init
     depends_on:
@@ -94,17 +94,26 @@ services:
       - /dev/mapper:/dev/mapper
       - cache-shared:/shared
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
-      - blockcastd-data:/var/opt/magma:ro
+      # Test/dev CA chain (matches the mount blockcastd/control-proxy use in
+      # docker-compose.override.yml). Lets cache-init resolve certifier.pem
+      # without requiring users to copy it into ~/.blockcast/certs.
+      - ${ROOTCA_PATH:-../.cache/test_certs}:/etc/magma/certs:ro
     environment:
-      # RKS-based LUKS key management (no password env var)
+      # Static defaults (ROOT_CA, GW_CERT/KEY, CACHE_PATH, CACHE_INIT_KEEP_ALIVE)
+      # are baked into the Dockerfile — only overrides and variable settings here.
       GATEWAY_ID: ${GATEWAY_ID:-${HOSTNAME}}
       RKS_URL: ${RKS_URL:-}
-      GW_CERT: /var/opt/magma/certs/gateway.crt
-      GW_KEY: /var/opt/magma/certs/gateway.key
-      ROOT_CA: /etc/ssl/certs/ca-certificates.crt
-      CACHE_SIZE_GB: ${CACHE_SIZE_GB:-100}
-      CACHE_PATH: /var/trafficserver/relaycache
-    restart: "no"
+      CACHE_SIZE_GB: ${CACHE_SIZE_GB:-20}
+      CACHE_DEVICE_NAME: ${CACHE_DEVICE_NAME:-cache0}
+      # localdev key bypass (only respected by `-tags localdev` build).
+      CACHE0_ENC_PASSWORD: ${CACHE0_ENC_PASSWORD:-}
+    healthcheck:
+      test: ["CMD", "test", "-b", "/dev/mapper/cache0"]
+      interval: 5s
+      timeout: 2s
+      retries: 60
+      start_period: 5s
+    stop_grace_period: 10s
     profiles:
       - ats
       - relay
@@ -117,20 +126,28 @@ services:
   # ATS backend (--profile ats or --profile relay)
   relay:
     <<: *relay-cache
-    image: ${DOCKER_REGISTRY:-blockcast}/relay-ats:${IMAGE_VERSION:-stable}
+    image: ${DOCKER_REGISTRY:-blockcast/}relay-ats:${IMAGE_VERSION:-stable}
     cap_add:
       - SYS_ADMIN
       - NET_BIND_SERVICE
+    # /dev/mapper required so relay can run cryptsetup close on the LUKS device
+    # during graceful-shutdown.sh / luks-cleanup.sh on SIGTERM.
+    devices:
+      - /dev/mapper/control:/dev/mapper/control:rwm
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
-      # Mount the ext4 directory from LUKS, NOT the raw block device.
-      # cache-init formats LUKS, creates ext4, mounts at relaycache/cache.
-      # Relay only sees the decrypted filesystem, not /dev/mapper/cache0.
+      # ATS uses /dev/mapper/cache0 directly as a raw block device (LUKS mode).
+      # cache-init opens the LUKS container via cryptsetup; the dm-crypt device
+      # persists in the kernel and is visible to relay through /dev/mapper.
       - ${CACHE_DIR:-${HOME}/.blockcast/relaycache}:/var/trafficserver/relaycache
+      - /dev/mapper:/dev/mapper
       - cache-shared:/shared
       - ${MAXMIND_DB_PATH:-/var/opt/magma/maxmind}:/var/opt/magma/maxmind:ro
     environment:
       <<: *relay-env
+      CACHE0_DEVICE: /dev/mapper/cache0
+      CACHE_DEVICE: /dev/mapper/cache0
+      CACHE_SIZE_GB: ${CACHE_SIZE_GB:-20}
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost/_health"]
       interval: 30s
@@ -139,7 +156,7 @@ services:
       start_period: 60s
     depends_on:
       cache-init:
-        condition: service_completed_successfully
+        condition: service_healthy
     profiles:
       - ats
       - relay
@@ -147,7 +164,7 @@ services:
   # Varnish backend (--profile varnish)
   relay-varnish:
     <<: *relay-cache
-    image: ${DOCKER_REGISTRY:-blockcast}/relay-varnish:${IMAGE_VERSION:-stable}
+    image: ${DOCKER_REGISTRY:-blockcast/}relay-varnish:${IMAGE_VERSION:-stable}
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
       - relay-vcl:/opt/varnish/var/vcl:ro
@@ -162,7 +179,7 @@ services:
   # Caddy backend (--profile caddy or --profile multicast)
   relay-caddy:
     <<: *relay-cache
-    image: ${DOCKER_REGISTRY:-blockcast}/relay-caddy:${IMAGE_VERSION:-stable}
+    image: ${DOCKER_REGISTRY:-blockcast/}relay-caddy:${IMAGE_VERSION:-stable}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -236,7 +253,7 @@ services:
   # Port 3333/3443: TR API (WITH mTLS - internal only, via relay bridge)
   traffic-router:
     <<: *managed
-    image: ${DOCKER_REGISTRY:-blockcast}/traffic-router:${IMAGE_VERSION:-stable}
+    image: ${DOCKER_REGISTRY:-blockcast/}traffic-router:${IMAGE_VERSION:-stable}
     container_name: relay-traffic-router
     hostname: traffic-router
     networks:
@@ -272,7 +289,7 @@ services:
   # Traffic Monitor - Cache health monitoring (internal only)
   traffic-monitor:
     <<: *managed
-    image: ${DOCKER_REGISTRY:-blockcast}/traffic-monitor:${IMAGE_VERSION:-stable}
+    image: ${DOCKER_REGISTRY:-blockcast/}traffic-monitor:${IMAGE_VERSION:-stable}
     container_name: relay-traffic-monitor
     hostname: traffic-monitor
     networks:
@@ -323,7 +340,7 @@ services:
   # AMT Relay - Automatic Multicast Tunneling (RFC 7450)
   amt-relay:
     <<: *managed
-    image: ${DOCKER_REGISTRY:-blockcast}/amtr:${IMAGE_VERSION:-stable}
+    image: ${DOCKER_REGISTRY:-blockcast/}amtr:${IMAGE_VERSION:-stable}
     container_name: relay-amt-relay
     hostname: amt-relay
     network_mode: host
@@ -356,7 +373,7 @@ services:
   # MoQ Relay - Media over QUIC (internal only, reached via relay ALPN on :443)
   moq-relay:
     <<: *managed
-    image: ${DOCKER_REGISTRY:-blockcast}/moq-relay:${IMAGE_VERSION:-stable}
+    image: ${DOCKER_REGISTRY:-blockcast/}moq-relay:${IMAGE_VERSION:-stable}
     container_name: relay-moq-relay
     hostname: moq-relay
     networks:
@@ -392,7 +409,7 @@ services:
   # When caddy backend is active, multicast is absorbed into relay-caddy via profiles
   multicast:
     <<: *managed
-    image: ${DOCKER_REGISTRY:-blockcast}/multicast:${IMAGE_VERSION:-stable}
+    image: ${DOCKER_REGISTRY:-blockcast/}multicast:${IMAGE_VERSION:-stable}
     container_name: relay-multicast
     hostname: multicast
     network_mode: host
