@@ -9,10 +9,22 @@
 #
 # For relay services (cache, TR, TM, AMT, MoQ, multicast), see docker-compose.relay.yml
 
+# Bound container log growth so writable layers don't fill /. Uses docker's
+# built-in "local" driver — chosen over `journald` so this works on hosts
+# without systemd-journald, including Docker Desktop on macOS/Windows.
+# Per-container cap is max-size × max-file = ~300 MB at the values below;
+# `docker logs` works as usual.
+x-logging: &default-logging
+  driver: local
+  options:
+    max-size: "100m"
+    max-file: "3"
+
 x-service: &service
   image: blockcast/cdn_gateway_go:stable
   restart: always
   stop_grace_period: 30s
+  logging: *default-logging
   # No "user:" — entrypoint runs as root, chowns mounted volumes to match the
   # container's blockcast user, then drops privileges via gosu.
   # This handles arbitrary host UIDs (the host may not even have a blockcast user).

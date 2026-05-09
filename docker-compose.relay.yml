@@ -7,11 +7,22 @@
 
 # -- Shared fragments --------------------------------------------------------
 
+# Bound container log growth so writable layers don't fill /; see
+# docker-compose.yml for driver-choice rationale.
+x-logging: &default-logging
+  driver: local
+  options:
+    max-size: "100m"
+    max-file: "3"
+
 # Common environment for Traffic Ops-connected services
 x-relay-env: &relay-env
   TO_URL: ${TO_URL:-https://to.infra.blockcast.net}
   TLD_DOMAIN: ${TLD_DOMAIN:-test.bcast.id}
   CDN_NAME: ${CDN_NAME:-public}
+  # Default cdnilog → blockcastd (resolved from service_registry.yml) over
+  # plaintext gRPC. Override to "false" only if a TLS endpoint is in use.
+  CDNILOG_INSECURE: ${CDNILOG_INSECURE:-true}
 
 # Common labels for all relay-managed services
 x-labels: &labels
@@ -23,6 +34,7 @@ x-relay-cache: &relay-cache
   container_name: relay
   hostname: relay
   restart: unless-stopped
+  logging: *default-logging
   networks:
     relay:
       aliases:
@@ -39,6 +51,7 @@ x-relay-cache: &relay-cache
 # Shared defaults for managed (non-cache) relay services
 x-managed: &managed
   restart: unless-stopped
+  logging: *default-logging
   profiles: [managed]
   depends_on:
     - blockcastd
@@ -75,6 +88,7 @@ services:
     image: ${DOCKER_REGISTRY:-blockcast/}cache-init:${CACHE_INIT_IMAGE_TAG:-dev}
     container_name: relay-cache-init
     hostname: cache-init
+    logging: *default-logging
     depends_on:
       - blockcastd
     networks:
@@ -211,6 +225,7 @@ services:
     image: curlimages/curl:latest
     container_name: maxmind-sync
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - relay
     entrypoint: /bin/sh
@@ -322,6 +337,7 @@ services:
     image: postgres:16-alpine
     container_name: relay-postgres
     hostname: postgres
+    logging: *default-logging
     profiles: [managed]
     networks:
       - relay
