@@ -428,9 +428,14 @@ services:
       service.type: "moq-relay"
 
   # Multicast - MAHP receiver/sender (standalone for ATS/Varnish backends)
-  # When caddy backend is active, multicast is absorbed into relay-caddy via profiles
+  # When caddy backend is active, multicast is absorbed into relay-caddy; the standalone
+  # container must NOT start (it shares ports 80/443 with relay-caddy). compose_manager
+  # suppresses it from the enabled set (getEnabledServices) AND from profiles — only the
+  # "multicast" profile activates this service, and compose_manager only adds that profile
+  # when the standalone multicast is in the enabled set (never true with caddy backend).
   multicast:
     <<: *managed
+    profiles: [multicast]  # Override *managed's [managed] — keeps this container off when caddy is active
     image: ${DOCKER_REGISTRY:-blockcast/}multicast:${IMAGE_VERSION:-stable}
     container_name: relay-multicast
     hostname: multicast
