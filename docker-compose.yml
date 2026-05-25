@@ -46,7 +46,7 @@ services:
   # Core service - only blockcastd starts on `docker compose up -d`
   # All other services are managed/dynamic and started after bootstrap
   blockcastd:
-    <<: *service
+    !!merge <<: *service
     container_name: blockcastd
     command: /usr/bin/blockcastd -logtostderr=true -v=0
     labels:
@@ -57,7 +57,7 @@ services:
   # control-proxy: Cloud mTLS dispatcher on 8443.
   # For unified cache + control-proxy use relay: docker-compose.relay.yml (relay-ats, relay-varnish, relay-caddy).
   control-proxy:
-    <<: *service
+    !!merge <<: *service
     container_name: control-proxy
     command: control_proxy
     profiles: [managed]
@@ -67,7 +67,7 @@ services:
       service.type: "control_proxy"
 
   beacond:
-    <<: *service
+    !!merge <<: *service
     container_name: beacond
     command: /usr/bin/beacond -logtostderr=true -v=0
     profiles: [managed]

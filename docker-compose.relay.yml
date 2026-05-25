@@ -45,7 +45,7 @@ x-relay-cache: &relay-cache
   expose:
     - "8443"
   labels:
-    <<: *labels
+    !!merge <<: *labels
     service.type: "relay"
 
 # Shared defaults for managed (non-cache) relay services
@@ -145,7 +145,7 @@ services:
 
   # ATS backend (--profile ats or --profile relay)
   relay:
-    <<: *relay-cache
+    !!merge <<: *relay-cache
     image: ${DOCKER_REGISTRY:-blockcast/}relay-ats:${IMAGE_VERSION:-stable}
     cap_add:
       - SYS_ADMIN
@@ -164,7 +164,7 @@ services:
       - cache-shared:/shared
       - ${MAXMIND_DB_PATH:-/var/opt/magma/maxmind}:/var/opt/magma/maxmind:ro
     environment:
-      <<: *relay-env
+      !!merge <<: *relay-env
       CACHE0_DEVICE: /dev/mapper/cache0
       CACHE_DEVICE: /dev/mapper/cache0
       CACHE_SIZE_GB: ${CACHE_SIZE_GB:-20}
@@ -183,14 +183,14 @@ services:
 
   # Varnish backend (--profile varnish)
   relay-varnish:
-    <<: *relay-cache
+    !!merge <<: *relay-cache
     image: ${DOCKER_REGISTRY:-blockcast/}relay-varnish:${IMAGE_VERSION:-stable}
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
       - relay-vcl:/opt/varnish/var/vcl:ro
       - ${MAXMIND_DB_PATH:-/var/opt/magma/maxmind}:/var/opt/magma/maxmind:ro
     environment:
-      <<: *relay-env
+      !!merge <<: *relay-env
       VCL_FILE: /etc/varnish/default.vcl
       VARNISH_STORAGE: malloc,1g
     profiles:
@@ -198,7 +198,7 @@ services:
 
   # Caddy backend (--profile caddy or --profile multicast)
   relay-caddy:
-    <<: *relay-cache
+    !!merge <<: *relay-cache
     image: ${DOCKER_REGISTRY:-blockcast/}relay-caddy:${IMAGE_VERSION:-stable}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -206,7 +206,7 @@ services:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
       - ${MAXMIND_DB_PATH:-/var/opt/magma/maxmind}:/var/opt/magma/maxmind:ro
     environment:
-      <<: *relay-env
+      !!merge <<: *relay-env
       CADDY_ADMIN: ""
       DB_FILE: "postgresql://${POSTGRES_USER:-caddy}:${POSTGRES_PASSWORD:-blockcast}@host.docker.internal:5432/${POSTGRES_DB:-multicast}"
     depends_on:
@@ -256,7 +256,7 @@ services:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
       - ${MAXMIND_DB_PATH:-/var/opt/magma/maxmind}:/var/opt/magma/maxmind
     labels:
-      <<: *labels
+      !!merge <<: *labels
       service.type: "maxmind-sync"
     profiles:
       - ats
@@ -273,7 +273,7 @@ services:
   # Port 53: Public DNS (NO mTLS)
   # Port 3333/3443: TR API (WITH mTLS - internal only, via relay bridge)
   traffic-router:
-    <<: *managed
+    !!merge <<: *managed
     image: ${DOCKER_REGISTRY:-blockcast/}traffic-router:${IMAGE_VERSION:-stable}
     container_name: relay-traffic-router
     hostname: traffic-router
@@ -301,7 +301,7 @@ services:
       tr_tm_ssl_insecure: "true"
       tr_tm_bootstrap_local: "true"
     labels:
-      <<: *labels
+      !!merge <<: *labels
       service.type: "traffic-router"
     depends_on:
       - blockcastd
@@ -309,7 +309,7 @@ services:
 
   # Traffic Monitor - Cache health monitoring (internal only)
   traffic-monitor:
-    <<: *managed
+    !!merge <<: *managed
     image: ${DOCKER_REGISTRY:-blockcast/}traffic-monitor:${IMAGE_VERSION:-stable}
     container_name: relay-traffic-monitor
     hostname: traffic-monitor
@@ -329,7 +329,7 @@ services:
       TO_CLIENT_CERT_FILE: "/var/opt/magma/certs/gateway.crt"
       TO_CLIENT_KEY_FILE: "/var/opt/magma/certs/gateway.key"
     labels:
-      <<: *labels
+      !!merge <<: *labels
       service.type: "traffic-monitor"
 
   # PostgreSQL - shared database for multicast/caddy
@@ -355,13 +355,13 @@ services:
       timeout: 5s
       retries: 5
     labels:
-      <<: *labels
+      !!merge <<: *labels
       service.type: "postgres"
     restart: unless-stopped
 
   # AMT Relay - Automatic Multicast Tunneling (RFC 7450)
   amt-relay:
-    <<: *managed
+    !!merge <<: *managed
     image: ${DOCKER_REGISTRY:-blockcast/}amtr:${IMAGE_VERSION:-stable}
     container_name: relay-amt-relay
     hostname: amt-relay
@@ -389,12 +389,12 @@ services:
       JUNIPER_RELAY_IP: ${JUNIPER_RELAY_IP:-}
       IPFIX_PORT: ${IPFIX_PORT:-4739}
     labels:
-      <<: *labels
+      !!merge <<: *labels
       service.type: "amt-relay"
 
   # MoQ Relay - Media over QUIC (internal only, reached via relay ALPN on :443)
   moq-relay:
-    <<: *managed
+    !!merge <<: *managed
     image: ${DOCKER_REGISTRY:-blockcast/}moq-relay:${IMAGE_VERSION:-stable}
     container_name: relay-moq-relay
     hostname: moq-relay
@@ -424,7 +424,7 @@ services:
       RELAY_TO_INSECURE: ${RELAY_TO_INSECURE:-false}
       RELAY_HOSTNAME: ${RELAY_HOSTNAME:-}
     labels:
-      <<: *labels
+      !!merge <<: *labels
       service.type: "moq-relay"
 
   # Multicast - MAHP receiver/sender (standalone for ATS/Varnish backends)
@@ -434,8 +434,8 @@ services:
   # "multicast" profile activates this service, and compose_manager only adds that profile
   # when the standalone multicast is in the enabled set (never true with caddy backend).
   multicast:
-    <<: *managed
-    profiles: [multicast]  # Override *managed's [managed] — keeps this container off when caddy is active
+    !!merge <<: *managed
+    profiles: [multicast] # Override *managed's [managed] — keeps this container off when caddy is active
     image: ${DOCKER_REGISTRY:-blockcast/}multicast:${IMAGE_VERSION:-stable}
     container_name: relay-multicast
     hostname: multicast
@@ -446,7 +446,7 @@ services:
       DB_FILE: "postgresql://${POSTGRES_USER:-caddy}:${POSTGRES_PASSWORD:-blockcast}@127.0.0.1:5432/${POSTGRES_DB:-multicast}"
       TO_URL: ${TO_URL:-https://to.infra.blockcast.net}
     labels:
-      <<: *labels
+      !!merge <<: *labels
       service.type: "multicast"
     depends_on:
       postgres:
