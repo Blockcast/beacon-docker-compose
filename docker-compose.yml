@@ -25,9 +25,10 @@ x-service: &service
   restart: always
   stop_grace_period: 30s
   logging: *default-logging
-  # No "user:" — entrypoint runs as root, chowns mounted volumes to match the
-  # container's blockcast user, then drops privileges via gosu.
-  # This handles arbitrary host UIDs (the host may not even have a blockcast user).
+  # Compose opts into root so entrypoint can chown mounted volumes and match the
+  # Docker socket GID before dropping privileges. The image itself defaults to
+  # USER 999:999 for Kubernetes and generic container runtime use.
+  user: "0:0"
   group_add:
     - ${DOCKER_GID:-999}
   volumes:
