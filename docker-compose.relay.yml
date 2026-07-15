@@ -423,6 +423,10 @@ services:
       RELAY_TO_KEY: ${RELAY_TO_KEY:-/var/opt/magma/certs/controller.key}
       RELAY_TO_INSECURE: ${RELAY_TO_INSECURE:-false}
       RELAY_HOSTNAME: ${RELAY_HOSTNAME:-}
+      # BLO-16044: moq-lite candidate-discovery silence budget (ms). The relay is
+      # config-or-throw and exits on init when moqlite is enabled (default protocols
+      # include moq-lite) and this is unset. Operator default 5000ms.
+      RELAY_CATALOG_PROBE_DEADLINE_MS: ${RELAY_CATALOG_PROBE_DEADLINE_MS:-5000}
     labels:
       !!merge <<: *labels
       service.type: "moq-relay"
