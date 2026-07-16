@@ -50,7 +50,7 @@ services:
     container_name: blockcastd
     command: /usr/bin/blockcastd -logtostderr=true -v=0
     environment:
-      # Load the baked bandwidth registry, including t3c-daemon at relay:50053.
+      # Load the baked bandwidth registry module; see Blockcast/magma#1369 for its bindings.
       MAGMA_MODULES: ${MAGMA_MODULES:-orc8r cdn bandwidth}
     labels:
       blockcast.node: "true"
