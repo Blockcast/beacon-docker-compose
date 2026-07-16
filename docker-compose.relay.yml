@@ -47,6 +47,7 @@ x-relay-cache: &relay-cache
   labels:
     <<: *labels
     service.type: "relay"
+    relay.resource-floor: "docker-v1"
 
 # Shared defaults for managed (non-cache) relay services
 x-managed: &managed
@@ -147,6 +148,15 @@ services:
   relay:
     <<: *relay-cache
     image: ${DOCKER_REGISTRY:-blockcast/}relay-ats:${IMAGE_VERSION:-stable}
+    cpus: "2"
+    mem_limit: "4g"
+    blkio_config:
+      device_read_bps:
+        - path: /dev/mapper/cache0
+          rate: "150mb"
+      device_write_bps:
+        - path: /dev/mapper/cache0
+          rate: "150mb"
     cap_add:
       - SYS_ADMIN
       - NET_BIND_SERVICE
@@ -185,6 +195,8 @@ services:
   relay-varnish:
     <<: *relay-cache
     image: ${DOCKER_REGISTRY:-blockcast/}relay-varnish:${IMAGE_VERSION:-stable}
+    cpus: "2"
+    mem_limit: "4g"
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
       - relay-vcl:/opt/varnish/var/vcl:ro
@@ -200,6 +212,8 @@ services:
   relay-caddy:
     <<: *relay-cache
     image: ${DOCKER_REGISTRY:-blockcast/}relay-caddy:${IMAGE_VERSION:-stable}
+    cpus: "2"
+    mem_limit: "4g"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
