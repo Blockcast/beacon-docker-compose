@@ -1,5 +1,6 @@
 # RELAY Gateway - CDN Cache with DNS forwarding
-# Extension of docker-compose.yml: relay cache, Traffic Router/Monitor, AMT, MoQ, multicast.
+# Extension of docker-compose.yml: relay cache, Cast, Traffic Router/Monitor,
+# AMT, MoQ, multicast.
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.relay.yml --profile <backend> up
@@ -91,6 +92,11 @@ services:
     networks:
       - default
       - relay
+    # Cast uses host networking for multicast and therefore is not present in
+    # Docker's bridge DNS. Keep the canonical service-registry name (`cast`)
+    # resolvable from blockcastd without adding a proxy or scrape path.
+    extra_hosts:
+      - "cast:host-gateway"
 
   # When relay cache is running, it aliases as "control-proxy" on the relay network.
   # When relay is NOT enabled (standalone control-proxy mode), the base control-proxy
@@ -305,6 +311,38 @@ services:
   # ==========================================================================
   # MANAGED RELAY SERVICES
   # ==========================================================================
+
+  # Cast - publisher orchestrator and native Magma Service303 endpoint.
+  # Host networking is required for the multicast egress path. blockcastd
+  # reaches GetMetrics at cast:50054 through the host-gateway alias above.
+  cast:
+    <<: *managed
+    image: ${DOCKER_REGISTRY:-blockcast/}cast:${IMAGE_VERSION:-stable}
+    container_name: cast
+    hostname: cast
+    network_mode: host
+    command: ["publish"]
+    volumes:
+      - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+    environment:
+      CAST_TO_URL: ${TO_URL:-https://to.infra.blockcast.net}
+      CAST_TO_CERT: ${CAST_TO_CERT:-/var/opt/magma/certs/gateway.crt}
+      CAST_TO_KEY: ${CAST_TO_KEY:-/var/opt/magma/certs/gateway.key}
+      # The gateway's TO endpoint is terminated by the internal ATS
+      # certificate in the default deployment; match the K8s Cast contract.
+      # Operators with a trusted TO CA can set CAST_TO_INSECURE=false.
+      CAST_TO_INSECURE: ${CAST_TO_INSECURE:-true}
+      CAST_TLS_CERT: ${CAST_TLS_CERT:-/var/opt/magma/certs/gateway.crt}
+      CAST_TLS_KEY: ${CAST_TLS_KEY:-/var/opt/magma/certs/gateway.key}
+      CAST_HOST_NETWORK: "true"
+      CAST_SERVICE303_LISTEN_ADDR: ${CAST_SERVICE303_LISTEN_ADDR:-0.0.0.0:50054}
+      CAST_RESTART_ON_FAILURE: ${CAST_RESTART_ON_FAILURE:-true}
+      CAST_RESTART_DELAY: ${CAST_RESTART_DELAY:-5}
+      CAST_MAX_RESTARTS: ${CAST_MAX_RESTARTS:-0}
+      RUST_LOG: ${RUST_LOG:-info,cast=info}
+    labels:
+      <<: *labels
+      service.type: "cast"
 
   # Traffic Router - Authoritative DNS for *.bcast.id
   # Port 53: Public DNS (NO mTLS)
