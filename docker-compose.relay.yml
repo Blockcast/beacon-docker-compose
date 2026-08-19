@@ -24,13 +24,25 @@ x-relay-env: &relay-env
   # only if a TLS endpoint is in use.
   #
   # NOT resolved from service_registry.yml, despite what this comment used to
-  # say. No relay-caddy container here mounts a registry, and CDNILOG_ENDPOINT
-  # is unset in this file, so the cdnilog plugin falls through to its hardcoded
-  # "blockcastd:50052" default. Measured across every topology on 2026-08-19
-  # (BLO-21191, ruling BLO-28895); the same false belief was corrected in
-  # trafficcontrol's blockcast/cdnilog/module.go. Setting CDNILOG_ENDPOINT
-  # explicitly here is the intended fix, but it is a writer-before-reader
-  # cutover and is not authorized yet -- do not add it as a drive-by.
+  # say. Three independent facts close that branch, each checkable from source:
+  #   - nothing mounts a registry here — relay-caddy's volumes below are certs
+  #     and the MaxMind DB, and the x-relay-cache anchor carries no volumes;
+  #   - it is not baked into the image either — trafficcontrol's
+  #     Dockerfile.relay-base installs only control_proxy.yml into
+  #     /etc/magma/configs, and relay-caddy's runtime stage is FROM relay-base.
+  #     (The caddy RPM's registry copy in caddy.spec is commented out, and
+  #     targets /etc/magma rather than /etc/magma/configs in any case.);
+  #   - CDNILOG_ENDPOINT is unset in this file.
+  # So the cdnilog plugin falls through to its hardcoded "blockcastd:50052"
+  # default. The same false belief is corrected on the code side, in
+  # trafficcontrol's blockcast/cdnilog/module.go, by
+  # Blockcast/trafficcontrol#1506 (pending merge). The cross-topology
+  # measurement behind this is recorded in BLO-21191 (ruling BLO-28895) — do
+  # not restate the registry path as live without re-measuring it.
+  #
+  # Setting CDNILOG_ENDPOINT explicitly here is the intended fix, but it is a
+  # writer-before-reader cutover and is not authorized yet — do not add it as
+  # a drive-by.
   CDNILOG_INSECURE: ${CDNILOG_INSECURE:-true}
 
 # Common labels for all relay-managed services
