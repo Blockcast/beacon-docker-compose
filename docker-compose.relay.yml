@@ -20,8 +20,17 @@ x-relay-env: &relay-env
   TO_URL: ${TO_URL:-https://to.infra.blockcast.net}
   TLD_DOMAIN: ${TLD_DOMAIN:-test.bcast.id}
   CDN_NAME: ${CDN_NAME:-public}
-  # Default cdnilog → blockcastd (resolved from service_registry.yml) over
-  # plaintext gRPC. Override to "false" only if a TLS endpoint is in use.
+  # Default cdnilog → blockcastd over plaintext gRPC. Override to "false"
+  # only if a TLS endpoint is in use.
+  #
+  # NOT resolved from service_registry.yml, despite what this comment used to
+  # say. No relay-caddy container here mounts a registry, and CDNILOG_ENDPOINT
+  # is unset in this file, so the cdnilog plugin falls through to its hardcoded
+  # "blockcastd:50052" default. Measured across every topology on 2026-08-19
+  # (BLO-21191, ruling BLO-28895); the same false belief was corrected in
+  # trafficcontrol's blockcast/cdnilog/module.go. Setting CDNILOG_ENDPOINT
+  # explicitly here is the intended fix, but it is a writer-before-reader
+  # cutover and is not authorized yet -- do not add it as a drive-by.
   CDNILOG_INSECURE: ${CDNILOG_INSECURE:-true}
 
 # Common labels for all relay-managed services
