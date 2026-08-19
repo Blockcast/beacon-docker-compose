@@ -37,8 +37,10 @@ x-relay-env: &relay-env
   # default. The same false belief is corrected on the code side, in
   # trafficcontrol's blockcast/cdnilog/module.go, by
   # Blockcast/trafficcontrol#1506 (pending merge). The cross-topology
-  # measurement behind this is recorded in BLO-21191 (ruling BLO-28895) — do
-  # not restate the registry path as live without re-measuring it.
+  # measurement behind this is recorded in
+  # https://paperclip.blockcast.net/BLO/issues/BLO-21191 (ruling
+  # https://paperclip.blockcast.net/BLO/issues/BLO-28895) — do not restate the
+  # registry path as live without re-measuring it.
   #
   # Setting CDNILOG_ENDPOINT explicitly here is the intended fix, but it is a
   # writer-before-reader cutover and is not authorized yet — do not add it as
