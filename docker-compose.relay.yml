@@ -136,11 +136,12 @@ services:
       # docker-compose.override.yml). Lets cache-init resolve certifier.pem
       # without requiring users to copy it into ~/.blockcast/certs.
       - ${ROOTCA_PATH:-../.cache/test_certs}:/etc/magma/certs:ro
-      # BLO-1303 Layer 1: snowflake mount for per-gateway device-name prefix.
-      # Multi-tenant isolation: each tenant has its own ${HOME}/.blockcast/snowflake,
-      # so CloseOrphans scoped by "cache_<sha8>_" prefix can't touch co-tenants.
-      # Host file MUST be chmod 0600 (see luks-security runbook).
-      - ${HOME}/.blockcast/snowflake:/etc/snowflake:ro
+      # No snowflake mount. cache-init derives its LUKS device-name prefix from
+      # the gateway cert CN in the certs mount above (BLO-11793); the legacy
+      # ${HOME}/.blockcast/snowflake fallback is unreachable on any enrolled
+      # host and was removed along with its SNOWFLAKE_PATH env entry (TC-07 /
+      # BLO-23031). Do not reintroduce it — blockcastd still owns the host file
+      # in docker-compose.yml; only cache-init's read of it is gone.
     environment:
       # Static defaults (ROOT_CA, GW_CERT/KEY, CACHE_PATH, CACHE_INIT_KEEP_ALIVE)
       # are baked into the Dockerfile — only overrides and variable settings here.
@@ -150,7 +151,6 @@ services:
       CACHE_DEVICE_NAME: ${CACHE_DEVICE_NAME:-cache0}
       # localdev key bypass (only respected by `-tags localdev` build).
       CACHE0_ENC_PASSWORD: ${CACHE0_ENC_PASSWORD:-}
-      SNOWFLAKE_PATH: /etc/snowflake/snowflake
     healthcheck:
       test: ["CMD", "test", "-b", "/dev/mapper/cache0"]
       interval: 5s
