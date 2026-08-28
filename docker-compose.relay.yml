@@ -21,8 +21,21 @@ x-relay-env: &relay-env
   TO_URL: ${TO_URL:-https://to.infra.blockcast.net}
   TLD_DOMAIN: ${TLD_DOMAIN:-test.bcast.id}
   CDN_NAME: ${CDN_NAME:-public}
-  # Default cdnilog → blockcastd (resolved from service_registry.yml) over
-  # plaintext gRPC. Override to "false" only if a TLS endpoint is in use.
+  # Default cdnilog → blockcastd over plaintext gRPC. Override CDNILOG_INSECURE
+  # to "false" only if a TLS endpoint is in use.
+  #
+  # CDNILOG_ENDPOINT is set explicitly — writer half of the branch-4 cutover,
+  # https://paperclip.blockcast.net/BLO/issues/BLO-30503. Deliberate behavioural
+  # no-op: "blockcastd:50052" is byte-identical to fallbackCDNiLogEndpoint in
+  # trafficcontrol's blockcast/cdnilog/module.go, so the resolved endpoint is
+  # unchanged; only the source changes, which is what lets that fallback be
+  # deleted in https://paperclip.blockcast.net/BLO/issues/BLO-30504.
+  #
+  # It is NOT resolved from service_registry.yml, as this comment previously
+  # said — nothing mounts a registry into /etc/magma/configs here. Corrected on
+  # the code side by merged Blockcast/trafficcontrol#1506; measurement in
+  # https://paperclip.blockcast.net/BLO/issues/BLO-28895.
+  CDNILOG_ENDPOINT: ${CDNILOG_ENDPOINT:-blockcastd:50052}
   CDNILOG_INSECURE: ${CDNILOG_INSECURE:-true}
 
 # Common labels for all relay-managed services
