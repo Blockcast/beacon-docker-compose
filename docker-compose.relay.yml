@@ -118,6 +118,36 @@ services:
     container_name: relay-cache-init
     hostname: cache-init
     logging: *default-logging
+    # BLO-29773: cache-init was the only service in this stack with no restart
+    # policy — it merges neither *relay-cache nor *managed (both
+    # restart: unless-stopped), so Compose defaulted it to `no`. That mattered
+    # because both startup failures in trafficcontrol's cmd/cache-init/main.go
+    # (derivePrefix, ResolveConfig) return exitFailed BEFORE the
+    # CACHE_INIT_KEEP_ALIVE branch, so a failed start exits 2 in milliseconds
+    # and stayed down. The only thing that recovered it was relay's depends_on
+    # edge below being re-applied by blockcastd's hourly reconcile — an
+    # undeclared ~1h retry that disappears the moment that `up -d` grows
+    # --no-deps. During that window relay's service_healthy gate never opens,
+    # so the gateway's :80/:443 front stays down too.
+    #
+    # N=13 is derived, not picked. The ceiling is this service's own healthcheck
+    # tolerance: retries(60) x interval(5s) = 300s. Past that the healthcheck
+    # has already given up, relay's `condition: service_healthy` gate never
+    # opens, and retrying longer buys nothing. Docker backs off 100ms doubling
+    # to a 60s cap (moby daemon/internal/restartmanager/restartmanager.go:
+    # defaultTimeout 100ms, backoffMultiplier 2, maxRestartTimeout 1m; its
+    # >=10s-uptime backoff reset never fires here because the failure path exits
+    # in ms). Cumulative delay before restart N: 10 -> 102s, 12 -> 222s,
+    # 13 -> 282s, 14 -> 342s. 13 is the largest count that fits inside 300s.
+    #
+    # Bounded on purpose, not bare `on-failure`: past the identity check
+    # fetchKey reaches RKS, and an RKS 403 is a live failure mode (BLO-14944,
+    # BLO-10667). Bounding the count is what keeps a 403 from becoming a retry
+    # storm against RKS. Safe on the success path — CACHE_INIT_KEEP_ALIVE=true
+    # is baked into the image, so success never exits and the policy only ever
+    # fires on failure; cache-init is already idempotent across restarts
+    # (luks.CloseOrphans then luks.Prepare on every start).
+    restart: on-failure:13
     depends_on:
       - blockcastd
     networks:
@@ -163,6 +193,16 @@ services:
       retries: 60
       start_period: 5s
     stop_grace_period: 10s
+    # The `relay -> cache-init` depends_on edge further down is ATS-SCOPED BY
+    # DESIGN, and the coupling is undeclared on both sides — which is why it is
+    # written down here (BLO-29773). Only the ATS `relay` service declares it;
+    # relay-varnish and relay-caddy share the *relay-cache anchor, which carries
+    # no such edge, because neither consumes the LUKS block device — ATS uses
+    # /dev/mapper/cache0 directly as raw storage, varnish uses malloc and caddy
+    # uses postgres. These profiles are what keep the two sides consistent:
+    # cache-init is only ever created under a profile that also creates ATS.
+    # Do NOT add the edge to varnish/caddy — it would change their startup
+    # ordering, and gate them on a device they never open, for no benefit.
     profiles:
       - ats
       - relay
