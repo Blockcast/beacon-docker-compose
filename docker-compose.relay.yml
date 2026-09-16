@@ -130,23 +130,49 @@ services:
     # --no-deps. During that window relay's service_healthy gate never opens,
     # so the gateway's :80/:443 front stays down too.
     #
-    # N=13 is derived, not picked. The ceiling is this service's own healthcheck
-    # tolerance: retries(60) x interval(5s) = 300s. Past that the healthcheck
-    # has already given up, relay's `condition: service_healthy` gate never
-    # opens, and retrying longer buys nothing. Docker backs off 100ms doubling
-    # to a 60s cap (moby daemon/internal/restartmanager/restartmanager.go:
-    # defaultTimeout 100ms, backoffMultiplier 2, maxRestartTimeout 1m; its
-    # >=10s-uptime backoff reset never fires here because the failure path exits
-    # in ms). Cumulative delay before restart N: 10 -> 102s, 12 -> 222s,
-    # 13 -> 282s, 14 -> 342s. 13 is the largest count that fits inside 300s.
+    # N is bounded by the hourly reconcile, because that is what RE-ARMS it:
+    # each pass re-creates an exited cache-init, which resets Docker's restart
+    # counter, so N is a per-hour budget and not a lifetime one. Docker backs
+    # off 100ms doubling to a 60s cap (moby
+    # daemon/internal/restartmanager/restartmanager.go: defaultTimeout 100ms,
+    # backoffMultiplier 2, maxRestartTimeout 1m; its >=10s-uptime backoff reset
+    # never fires here because the failure path exits in ms). Cumulative delay
+    # before restart N: 10 -> 102s, 12 -> 222s, 13 -> 282s, 14 -> 342s. At
+    # N=13 the budget is spent and the container has settled `exited` ~282s in,
+    # well inside COMPOSE_CHECK_INTERVAL (1h). That makes 13 a sanity bound
+    # inside the reconcile interval, not a tight optimum — any N whose window
+    # stays well under 3600s is defensible.
+    #
+    # Do NOT re-derive N from the healthcheck below: retries(60) x interval(5s)
+    # looks like a 300s ceiling and is not one on this path. The failure exits
+    # in ms, inside start_period(5s), so no probe ever runs; and Docker resets
+    # health to `starting` on every container start, so the 60-retry budget is
+    # per-run and never spans a restart cycle. It is never consumed here.
     #
     # Bounded on purpose, not bare `on-failure`: past the identity check
     # fetchKey reaches RKS, and an RKS 403 is a live failure mode (BLO-14944,
-    # BLO-10667). Bounding the count is what keeps a 403 from becoming a retry
-    # storm against RKS. Safe on the success path — CACHE_INIT_KEEP_ALIVE=true
-    # is baked into the image, so success never exits and the policy only ever
-    # fires on failure; cache-init is already idempotent across restarts
-    # (luks.CloseOrphans then luks.Prepare on every start).
+    # BLO-10667). The bound is what caps the blast radius, and the multiplier
+    # is the number to check before raising N: a persistent 403 now costs up to
+    # 13 fetchKey attempts per gateway per hour instead of 1, fleet-wide.
+    # Safe on the success path — CACHE_INIT_KEEP_ALIVE=true is baked into the
+    # image, so success never exits and the policy only ever fires on failure;
+    # cache-init is already idempotent across restarts (luks.CloseOrphans then
+    # luks.Prepare on every start).
+    #
+    # One behavioural change this buys, stated so it is not a surprise: while
+    # the budget is unspent the container sits `restarting` rather than
+    # `exited`, so compose's service_healthy wait for relay no longer aborts
+    # fast on "container relay-cache-init exited (2)" (pkg/compose:
+    # isServiceHealthy errors only on StateExited; `restarting` reports health
+    # `starting`, which just keeps polling). That wait can therefore block for
+    # the ~282s window. Checked and safe: blockcastd's setupComposeCommand
+    # builds the command with exec.Command and no context — there is no
+    # CommandContext, WithTimeout or WithDeadline anywhere in magma's
+    # orc8r/gateway/go/services/magmad/compose_manager — so nothing kills the
+    # reconcile mid-flight. applyServicesAndHandleUpdates starts services
+    # serially, so the worst case delays the remainder of that one pass by
+    # ~282s against a 1h interval. Re-check this if that call ever grows a
+    # deadline shorter than ~285s.
     restart: on-failure:13
     depends_on:
       - blockcastd
@@ -199,10 +225,19 @@ services:
     # relay-varnish and relay-caddy share the *relay-cache anchor, which carries
     # no such edge, because neither consumes the LUKS block device — ATS uses
     # /dev/mapper/cache0 directly as raw storage, varnish uses malloc and caddy
-    # uses postgres. These profiles are what keep the two sides consistent:
-    # cache-init is only ever created under a profile that also creates ATS.
+    # uses postgres.
     # Do NOT add the edge to varnish/caddy — it would change their startup
     # ordering, and gate them on a device they never open, for no benefit.
+    #
+    # Profiles keep the two sides consistent under `ats` and `relay` ONLY:
+    # those two create cache-init and ATS together, so the edge is always
+    # satisfiable. `luks` is deliberately NOT in that set — it is declared on
+    # cache-init alone (nothing else in this file carries it, and blockcastd's
+    # computeProfiles never emits it), so it is a manual operator entry point
+    # that brings cache-init up standalone with no ATS. On that profile there
+    # is no service_healthy gate at all, so the restart budget above is the
+    # only declared recovery, and the hourly-reconcile path described there
+    # does not apply.
     profiles:
       - ats
       - relay
@@ -253,6 +288,9 @@ services:
       retries: 3
       start_period: 60s
     depends_on:
+      # ATS-scoped by design, and undeclared on both sides — read the BLO-29773
+      # note on cache-init above before adding this edge to relay-varnish or
+      # relay-caddy. Neither opens the LUKS device; neither should gate on it.
       cache-init:
         condition: service_healthy
     profiles:
