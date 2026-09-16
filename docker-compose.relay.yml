@@ -131,8 +131,11 @@ services:
     # so the gateway's :80/:443 front stays down too.
     #
     # N is bounded by the hourly reconcile, because that is what RE-ARMS it:
-    # each pass re-creates an exited cache-init, which resets Docker's restart
-    # counter, so N is a per-hour budget and not a lifetime one. Docker backs
+    # each pass re-starts (or recreates) an exited cache-init, and the start
+    # path resets Docker's restart counter (moby ContainerStart ->
+    # ResetRestartManager(true)), so under `ats`/`relay` N is a per-hour budget
+    # and not a lifetime one. Under `luks` nothing re-arms it and 13 is a
+    # lifetime budget — see the profiles note below. Docker backs
     # off 100ms doubling to a 60s cap (moby
     # daemon/internal/restartmanager/restartmanager.go: defaultTimeout 100ms,
     # backoffMultiplier 2, maxRestartTimeout 1m; its >=10s-uptime backoff reset
