@@ -57,16 +57,14 @@ OPERATOR_ONLY=(luks relay)
 # the run just as loudly as a passing set that breaks. That is what stops it
 # silently becoming a permanent allowlist.
 #
-# MECHANISM, so the pin is actionable rather than just a label: both sets enable
-# two cache backends at once. `multicast` pulls in relay-caddy (its profile list
-# is [caddy, multicast]) on top of the ats/varnish backend the CDN config
-# selected, and all three inherit x-relay-cache -- so they collide on
-# `container_name: relay` and on ports 80/443. The observed error is
-# `services.relay: container name "relay" is already in use`.
-declare -A EXPECTED_FAIL=(
-  ["managed ats multicast"]="BLO-34239"
-  ["managed varnish multicast"]="BLO-34239"
-)
+# FIXED by BLO-34364, which removed "multicast" from relay-caddy's profile list.
+# Both sets used to enable two cache backends at once: `multicast` pulled in
+# relay-caddy (its profile list was [caddy, multicast]) on top of the ats/varnish
+# backend the CDN config had already selected, and all three inherit
+# x-relay-cache -- so they collided on `container_name: relay` and on ports
+# 80/443, with `services.relay: container name "relay" is already in use`.
+# Both now resolve, and the REACHABLE loop below asserts that permanently.
+declare -A EXPECTED_FAIL=()
 
 # --- Coverage guard ---------------------------------------------------------
 # Enumerate the profiles the manifests actually declare and assert the matrix
