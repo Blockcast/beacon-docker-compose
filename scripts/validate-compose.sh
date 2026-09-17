@@ -23,6 +23,10 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
 
+# Fail closed: the restart-policy audit below is jq-only, and a missing jq would
+# otherwise skip it silently while the lane stayed green.
+command -v jq >/dev/null || { echo "FAIL  jq is required by the restart-policy audit"; exit 1; }
+
 FILES=(-f docker-compose.yml -f docker-compose.relay.yml)
 
 # Pinned project name. `docker compose config` otherwise derives it from the
@@ -85,10 +89,16 @@ if ! declared_raw=$(docker compose "${FILES[@]}" config --profiles 2>&1); then
   echo "      $(head -1 <<<"$declared_raw")"
   exit 1
 fi
-mapfile -t DECLARED < <(grep -E '^[a-z0-9_-]+$' <<<"$declared_raw" | sort -u)
+# compose's own accepted profile-name shape. A tighter filter drops legal names:
+# `^[a-z0-9_-]+$` silently swallowed anything carrying a dot or an uppercase
+# letter, so a profile named `Dev.Local_1` never reached DECLARED and neither
+# direction of the coverage guard could fire on it -- the same
+# invisible-by-construction hole this guard exists to close, one layer down.
+PROFILE_RE='^[a-zA-Z0-9][a-zA-Z0-9_.-]*$'
+mapfile -t DECLARED < <(grep -E "$PROFILE_RE" <<<"$declared_raw" | sort -u)
 
 mapfile -t KNOWN < <(printf '%s\n' "${REACHABLE[@]}" "${OPERATOR_ONLY[@]}" \
-  | tr ' ' '\n' | grep -E '^[a-z0-9_-]+$' | sort -u)
+  | tr ' ' '\n' | grep -E "$PROFILE_RE" | sort -u)
 rc=0
 
 # Declared but untested: a new profile nobody wired into the matrix.
@@ -113,6 +123,36 @@ for p in "${KNOWN[@]}"; do
     rc=1
   fi
 done
+
+# --- Restart-policy audit ---------------------------------------------------
+# Two hazards `docker compose config` resolves CLEANLY, so rc alone sees
+# neither. Both live in getRestartPolicy (docker/compose pkg/compose/create.go):
+#
+#  1. `attempts, _ = strconv.Atoi(num)` DISCARDS the parse error, so a typo'd
+#     count (`on-failure:l3`, or a trailing space) -- and a bare `on-failure` --
+#     reaches the daemon as MaximumRetryCount 0, which Docker reads as
+#     UNLIMITED. One character removes the bound with every layer green. That is
+#     the retry storm BLO-29773 bounded cache-init at 13 to prevent: a
+#     persistent RKS 403 would then cost unlimited fetchKey attempts per gateway
+#     per hour, fleet-wide.
+#  2. a `deploy.restart_policy` block is a plain ASSIGNMENT over whatever
+#     `restart:` produced -- not a merge, no warning. The resolved config still
+#     prints the `restart:` value while the daemon applies the deploy block, so
+#     reading `.restart` alone stays green straight through it.
+#
+# Asserted over every service in each resolving set rather than pinned to one,
+# so a service added later inherits the check instead of needing to be listed.
+restart_audit() { # restart_audit <label>   -- resolved JSON on stdin
+  jq -r --arg label "$1" '
+    .services // {} | to_entries[]
+    | .key as $svc | (.value.restart // "") as $r
+    | if ($r | startswith("on-failure")) and (($r | test("^on-failure:[1-9][0-9]*$")) | not)
+      then "FAIL  [\($label)] \($svc): restart \"\($r)\" has no bounded retry count.\n      compose discards the count parse error, so this reaches the daemon as\n      MaximumRetryCount 0 -- unlimited. Write on-failure:<N>."
+      elif ($r != "") and (.value.deploy.restart_policy != null)
+      then "FAIL  [\($label)] \($svc): declares both restart and deploy.restart_policy.\n      The deploy block silently overwrites restart:, so the policy printed by\n      `config` is not the one the daemon applies. Keep exactly one."
+      else empty
+      end'
+}
 
 # --- Run --------------------------------------------------------------------
 check() { # check <label>   -- label is a space-separated profile set
@@ -158,6 +198,15 @@ check() { # check <label>   -- label is a space-separated profile set
     echo "FAIL  [$label] rc=$got: $first"
     return 1
   fi
+
+  local audit
+  audit=$(docker compose -p "$PROJECT" "${FILES[@]}" "${args[@]}" config --format json 2>/dev/null \
+    | restart_audit "$label")
+  if [[ -n "$audit" ]]; then
+    printf '%b\n' "$audit"
+    return 1
+  fi
+
   echo "ok    [$label]"
 }
 
