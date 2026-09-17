@@ -317,7 +317,7 @@ services:
     profiles:
       - varnish
 
-  # Caddy backend (--profile caddy or --profile multicast)
+  # Caddy backend (--profile caddy)
   relay-caddy:
     <<: *relay-cache
     image: ${DOCKER_REGISTRY:-blockcast/}relay-caddy:${IMAGE_VERSION:-stable}
@@ -336,7 +336,6 @@ services:
       - postgres
     profiles:
       - caddy
-      - multicast
 
   # ==========================================================================
   # MAXMIND ASN DATABASE SYNC
