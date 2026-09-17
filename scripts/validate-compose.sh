@@ -21,7 +21,7 @@
 # Usage: scripts/validate-compose.sh
 set -uo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 FILES=(-f docker-compose.yml -f docker-compose.relay.yml)
 
@@ -48,48 +48,90 @@ REACHABLE=(
 
 # Profiles the gateway never computes, reachable only by an operator running
 # compose by hand. Checked standalone so they cannot rot unnoticed.
-OPERATOR_ONLY=(luks blockcastd relay)
+# Every name here must be a profile some manifest actually declares -- see the
+# bidirectional coverage guard below for why.
+OPERATOR_ONLY=(luks relay)
 
 # Sets known to be broken on main, each pinned to the issue tracking the fix.
 # This list is asserted in BOTH directions: an entry that starts passing fails
 # the run just as loudly as a passing set that breaks. That is what stops it
 # silently becoming a permanent allowlist.
+#
+# MECHANISM, so the pin is actionable rather than just a label: both sets enable
+# two cache backends at once. `multicast` pulls in relay-caddy (its profile list
+# is [caddy, multicast]) on top of the ats/varnish backend the CDN config
+# selected, and all three inherit x-relay-cache -- so they collide on
+# `container_name: relay` and on ports 80/443. The observed error is
+# `services.relay: container name "relay" is already in use`.
 declare -A EXPECTED_FAIL=(
   ["managed ats multicast"]="BLO-34239"
   ["managed varnish multicast"]="BLO-34239"
 )
 
 # --- Coverage guard ---------------------------------------------------------
-# Enumerate the profiles actually declared in the manifests and fail on any this
-# script does not know about. A hand-maintained list goes stale silently, and
-# the gap is invisible precisely where it matters.
-mapfile -t DECLARED < <(
-  grep -hA6 '^\s*profiles:' docker-compose*.yml \
-    | grep -oE '^\s*-\s+[a-z0-9_-]+' | awk '{print $2}' | sort -u
-)
-# profiles: [managed] inline-list form is not matched by the block scan above.
-mapfile -t DECLARED_INLINE < <(
-  grep -hoE '^\s*profiles:\s*\[[^]]+\]' docker-compose*.yml \
-    | sed -E 's/.*\[//; s/\]//; s/,/ /g' | tr ' ' '\n' | grep -E '^[a-z0-9_-]+$' | sort -u
-)
-DECLARED+=("${DECLARED_INLINE[@]}")
-mapfile -t DECLARED < <(printf '%s\n' "${DECLARED[@]}" | sort -u)
+# Enumerate the profiles the manifests actually declare and assert the matrix
+# above names exactly that set, in BOTH directions.
+#
+# `config --profiles` is compose's own YAML-aware answer. The hand-rolled scan
+# this replaces read six lines past every `profiles:` key and swept up list
+# items from whatever block followed, so `depends_on: - blockcastd` at
+# docker-compose.relay.yml:85-86 put `blockcastd` -- a service, never a profile
+# -- into the declared set. Any `depends_on` neighbouring a `profiles:` key
+# could fail this lane red without touching a profile at all.
+if ! declared_raw=$(docker compose "${FILES[@]}" config --profiles 2>&1); then
+  echo "FAIL  'docker compose config --profiles' failed, so matrix coverage"
+  echo "      cannot be verified. Manifests may not parse at all:"
+  echo "      $(head -1 <<<"$declared_raw")"
+  exit 1
+fi
+mapfile -t DECLARED < <(grep -E '^[a-z0-9_-]+$' <<<"$declared_raw" | sort -u)
 
-KNOWN=$(printf '%s\n' "${REACHABLE[@]}" "${OPERATOR_ONLY[@]}" | tr ' ' '\n' | sort -u)
+mapfile -t KNOWN < <(printf '%s\n' "${REACHABLE[@]}" "${OPERATOR_ONLY[@]}" \
+  | tr ' ' '\n' | grep -E '^[a-z0-9_-]+$' | sort -u)
 rc=0
+
+# Declared but untested: a new profile nobody wired into the matrix.
 for p in "${DECLARED[@]}"; do
-  if ! grep -qx "$p" <<<"$KNOWN"; then
-    echo "FAIL  profile '$p' is declared in a manifest but is not in REACHABLE or"
-    echo "      OPERATOR_ONLY. Decide which it is and add it, so it gets tested."
+  if ! printf '%s\n' "${KNOWN[@]}" | grep -qx "$p"; then
+    echo "FAIL  profile '$p' is declared in a manifest but is in neither REACHABLE"
+    echo "      nor OPERATOR_ONLY. Decide which it is and add it, so it gets tested."
+    rc=1
+  fi
+done
+
+# Tested but undeclared: asserts nothing, and looks exactly like coverage.
+# compose accepts an unknown --profile silently and just resolves the no-profile
+# baseline, so `--profile blockcastd` was byte-identical to
+# `--profile zzz-does-not-exist`. Without this direction such an entry is
+# invisible by construction.
+for p in "${KNOWN[@]}"; do
+  if ! printf '%s\n' "${DECLARED[@]}" | grep -qx "$p"; then
+    echo "FAIL  '$p' is in the matrix but no manifest declares it as a profile."
+    echo "      compose resolves an unknown --profile to the baseline without"
+    echo "      erroring, so this entry tests nothing. Remove it, or declare it."
     rc=1
   fi
 done
 
 # --- Run --------------------------------------------------------------------
-check() { # check <label> <profile...>
-  local label="$1"; shift
-  local args=() p
-  for p in "$@"; do args+=(--profile "$p"); done
+check() { # check <label>   -- label is a space-separated profile set
+  local label="$1"
+  local args=() p parts=()
+  # Split the label here rather than relying on the caller passing $set
+  # unquoted. compose ignores an unknown --profile silently and just resolves
+  # the no-profile baseline, so a set that fails to split into separate flags
+  # becomes one bogus profile, parses cleanly, and reports `ok` for a
+  # combination that was never tested. Keeping the split inside one function
+  # under a known IFS makes that unrepresentable.
+  read -ra parts <<<"$label"
+  for p in "${parts[@]}"; do
+    if ! printf '%s\n' "${DECLARED[@]}" | grep -qx "$p"; then
+      echo "FAIL  [$label] '$p' is not a profile any manifest declares, so compose"
+      echo "      would ignore it and silently test the baseline instead."
+      return 1
+    fi
+    args+=(--profile "$p")
+  done
 
   local err; err=$(docker compose -p "$PROJECT" "${FILES[@]}" "${args[@]}" config 2>&1 >/dev/null)
   local got=$?
@@ -99,7 +141,12 @@ check() { # check <label> <profile...>
   if [[ -n "$want" ]]; then
     if (( got == 0 )); then
       echo "FAIL  [$label] now resolves, but is pinned as broken under $want."
-      echo "      The fix landed -- remove it from EXPECTED_FAIL in this script."
+      echo "      Confirm the mechanism is actually gone before editing the pin:"
+      echo "      both pinned sets fail on two cache backends colliding over"
+      echo "      container_name 'relay'. If that is genuinely fixed, remove the"
+      echo "      entry from EXPECTED_FAIL. If instead this set resolved to the"
+      echo "      no-profile baseline, the profile names are not reaching compose"
+      echo "      -- compose ignores an unknown --profile silently."
       return 1
     fi
     echo "known [$label] rc=$got (tracked by $want): $first"
@@ -113,15 +160,17 @@ check() { # check <label> <profile...>
   echo "ok    [$label]"
 }
 
+echo "compose: $(docker compose version 2>&1 | head -1)"
+echo
 echo "== gateway-reachable profile sets =="
 for set in "${REACHABLE[@]}"; do
-  check "$set" $set || rc=1
+  check "$set" || rc=1
 done
 
 echo
 echo "== operator-only profiles (standalone) =="
 for p in "${OPERATOR_ONLY[@]}"; do
-  check "$p" "$p" || rc=1
+  check "$p" || rc=1
 done
 
 echo

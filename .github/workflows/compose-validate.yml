@@ -16,7 +16,12 @@ on:
 
 concurrency:
   group: compose-validate-${{ github.ref }}
-  cancel-in-progress: true
+  # PR-side only. Superseding a push to main would leave the skipped commit with
+  # no recorded verdict on the exact path this lane exists to protect.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
   config:
