@@ -1,0 +1,34 @@
+name: compose-validate
+
+# main is the fleet's live fetch path: magma's compose_manager pulls both
+# manifests from refs/heads/main and reconciles hourly, so whatever lands here
+# reaches every enrolled gateway with no tag, channel, or staged rollout in
+# between. This lane is the syntactic floor on that path (BLO-34239).
+
+on:
+  pull_request:
+    # synchronize is required: without it the lane reports a verdict for an
+    # earlier commit than the one that is actually the head at merge time.
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: compose-validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  config:
+    # arc-light has the docker CLI and compose v2 plugin but no daemon.
+    # `docker compose config` is parse-only and never dials the daemon, so this
+    # lane needs no privileged pool. Verified against a dead DOCKER_HOST.
+    runs-on: arc-light
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate every gateway-reachable profile set
+        run: ./scripts/validate-compose.sh
