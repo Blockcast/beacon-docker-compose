@@ -199,9 +199,19 @@ check() { # check <label>   -- label is a space-separated profile set
     return 1
   fi
 
-  local audit
-  audit=$(docker compose -p "$PROJECT" "${FILES[@]}" "${args[@]}" config --format json 2>/dev/null \
-    | restart_audit "$label")
+  # Fail closed on the json call too. Piping it straight into jq would let a
+  # failure arrive as empty input, which `restart_audit` reports as "nothing to
+  # flag" -- the audit would go silent rather than red, which is the same
+  # invisible-by-construction hole the jq guard at the top of this file closes
+  # one call up. The YAML rc check above does not cover this: the two
+  # formatters do not always agree on rc for one project.
+  local resolved audit
+  if ! resolved=$(docker compose -p "$PROJECT" "${FILES[@]}" "${args[@]}" config --format json 2>&1); then
+    echo "FAIL  [$label] restart-policy audit could not resolve the project as json:"
+    echo "      $(head -1 <<<"$resolved")"
+    return 1
+  fi
+  audit=$(restart_audit "$label" <<<"$resolved")
   if [[ -n "$audit" ]]; then
     printf '%b\n' "$audit"
     return 1
