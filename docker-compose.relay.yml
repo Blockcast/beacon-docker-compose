@@ -82,6 +82,11 @@ services:
     networks:
       - default
       - relay
+    # Cast uses host networking for multicast and therefore is not present in
+    # Docker's bridge DNS. Keep the canonical service-registry name (`cast`)
+    # resolvable from blockcastd without adding a proxy or scrape path.
+    extra_hosts:
+      - "cast:host-gateway"
 
   # When relay cache is running, it aliases as "control-proxy" on the relay network.
   # When relay is NOT enabled (standalone control-proxy mode), the base control-proxy
