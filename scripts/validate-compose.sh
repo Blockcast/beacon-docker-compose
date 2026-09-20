@@ -199,19 +199,35 @@ check() { # check <label>   -- label is a space-separated profile set
     return 1
   fi
 
-  # Fail closed on the json call too. Piping it straight into jq would let a
-  # failure arrive as empty input, which `restart_audit` reports as "nothing to
-  # flag" -- the audit would go silent rather than red, which is the same
-  # invisible-by-construction hole the jq guard at the top of this file closes
-  # one call up. The YAML rc check above does not cover this: the two
-  # formatters do not always agree on rc for one project.
+  # Fail closed on EVERY reason the audit could fail to run, not on the two we
+  # happened to name: `restart_audit` reports an audit that never ran and an
+  # audit that found nothing identically -- as silence -- so any gap here is the
+  # same invisible-by-construction hole the jq guard at the top of this file
+  # closes one call up. Two distinct causes, and BOTH checks are needed because
+  # neither subsumes the other:
+  #
+  #  1. compose rc != 0. The YAML rc check above does not cover this: the two
+  #     formatters do not always agree on rc for one project.
+  #  2. compose rc == 0 with stdout that is not JSON. Capturing `2>&1` into the
+  #     parsed value created exactly this: one compose warning on stderr --
+  #     running with $HOSTNAME unset is enough, it is one of only two
+  #     interpolations in these manifests carrying no `:-` default -- prefixes
+  #     the JSON, jq's parse error goes to ITS stderr and is discarded, and the
+  #     audit returns empty. Measured at 78e0ac4b with `on-failure:l3` planted:
+  #     rc=1 and 20 FAIL lines with $HOSTNAME set, rc=0 and PASS without it.
+  #     Keep stderr off the parsed value (as the YAML call above does) and check
+  #     jq's rc, which is 5 on non-JSON.
+  #
+  # jq exits 0 on EMPTY input, so (2) alone would still pass a failed compose.
   local resolved audit
-  if ! resolved=$(docker compose -p "$PROJECT" "${FILES[@]}" "${args[@]}" config --format json 2>&1); then
-    echo "FAIL  [$label] restart-policy audit could not resolve the project as json:"
-    echo "      $(head -1 <<<"$resolved")"
+  if ! resolved=$(docker compose -p "$PROJECT" "${FILES[@]}" "${args[@]}" config --format json 2>/dev/null) \
+     || ! audit=$(restart_audit "$label" <<<"$resolved"); then
+    echo "FAIL  [$label] the restart-policy audit did not run: 'config --format json'"
+    echo "      produced no parseable JSON. The audit reports nothing in that state,"
+    echo "      which is indistinguishable from a clean audit. Reproduce with:"
+    echo "      docker compose -p $PROJECT ${FILES[*]} ${args[*]} config --format json"
     return 1
   fi
-  audit=$(restart_audit "$label" <<<"$resolved")
   if [[ -n "$audit" ]]; then
     printf '%b\n' "$audit"
     return 1
