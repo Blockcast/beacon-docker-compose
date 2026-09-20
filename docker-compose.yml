@@ -7,7 +7,7 @@
 #   docker compose up -d                    # Start core services
 #   docker compose --profile managed up -d  # Start all services (for testing)
 #
-# For relay services (cache, TR, TM, AMT, MoQ, multicast), see docker-compose.relay.yml
+# For relay services (cache, Cast, TR, TM, AMT, MoQ, multicast), see docker-compose.relay.yml
 
 # Bound container log growth so writable layers don't fill /. Uses docker's
 # built-in "local" driver — chosen over `journald` so this works on hosts
@@ -79,7 +79,7 @@ services:
       managed: "true"
       service.type: "beacond"
 
-  # Dynamic relay services (cache, TR, TM, AMT, MoQ, multicast) are defined
+  # Dynamic relay services (cache, Cast, TR, TM, AMT, MoQ, multicast) are defined
   # in docker-compose.relay.yml with profile-based backend selection.
   # Use: docker compose -f docker-compose.yml -f docker-compose.relay.yml --profile <backend> up
 
