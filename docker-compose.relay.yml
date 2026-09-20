@@ -21,8 +21,21 @@ x-relay-env: &relay-env
   TO_URL: ${TO_URL:-https://to.infra.blockcast.net}
   TLD_DOMAIN: ${TLD_DOMAIN:-test.bcast.id}
   CDN_NAME: ${CDN_NAME:-public}
-  # Default cdnilog → blockcastd (resolved from service_registry.yml) over
-  # plaintext gRPC. Override to "false" only if a TLS endpoint is in use.
+  # Default cdnilog → blockcastd over plaintext gRPC. Override CDNILOG_INSECURE
+  # to "false" only if a TLS endpoint is in use.
+  #
+  # CDNILOG_ENDPOINT is set explicitly — writer half of the branch-4 cutover,
+  # https://paperclip.blockcast.net/BLO/issues/BLO-30503. Deliberate behavioural
+  # no-op: "blockcastd:50052" is byte-identical to fallbackCDNiLogEndpoint in
+  # trafficcontrol's blockcast/cdnilog/module.go, so the resolved endpoint is
+  # unchanged; only the source changes, which is what lets that fallback be
+  # deleted in https://paperclip.blockcast.net/BLO/issues/BLO-30504.
+  #
+  # It is NOT resolved from service_registry.yml, as this comment previously
+  # said — nothing mounts a registry into /etc/magma/configs here. Corrected on
+  # the code side by merged Blockcast/trafficcontrol#1506; measurement in
+  # https://paperclip.blockcast.net/BLO/issues/BLO-28895.
+  CDNILOG_ENDPOINT: ${CDNILOG_ENDPOINT:-blockcastd:50052}
   CDNILOG_INSECURE: ${CDNILOG_INSECURE:-true}
 
 # Common labels for all relay-managed services
@@ -119,11 +132,12 @@ services:
       # docker-compose.override.yml). Lets cache-init resolve certifier.pem
       # without requiring users to copy it into ~/.blockcast/certs.
       - ${ROOTCA_PATH:-../.cache/test_certs}:/etc/magma/certs:ro
-      # BLO-1303 Layer 1: snowflake mount for per-gateway device-name prefix.
-      # Multi-tenant isolation: each tenant has its own ${HOME}/.blockcast/snowflake,
-      # so CloseOrphans scoped by "cache_<sha8>_" prefix can't touch co-tenants.
-      # Host file MUST be chmod 0600 (see luks-security runbook).
-      - ${HOME}/.blockcast/snowflake:/etc/snowflake:ro
+      # No snowflake mount. cache-init derives its LUKS device-name prefix from
+      # the gateway cert CN in the certs mount above (BLO-11793); the legacy
+      # ${HOME}/.blockcast/snowflake fallback is unreachable on any enrolled
+      # host and was removed along with its SNOWFLAKE_PATH env entry (TC-07 /
+      # BLO-23031). Do not reintroduce it — blockcastd still owns the host file
+      # in docker-compose.yml; only cache-init's read of it is gone.
     environment:
       # Static defaults (ROOT_CA, GW_CERT/KEY, CACHE_PATH, CACHE_INIT_KEEP_ALIVE)
       # are baked into the Dockerfile — only overrides and variable settings here.
@@ -133,7 +147,6 @@ services:
       CACHE_DEVICE_NAME: ${CACHE_DEVICE_NAME:-cache0}
       # localdev key bypass (only respected by `-tags localdev` build).
       CACHE0_ENC_PASSWORD: ${CACHE0_ENC_PASSWORD:-}
-      SNOWFLAKE_PATH: /etc/snowflake/snowflake
     healthcheck:
       test: ["CMD", "test", "-b", "/dev/mapper/cache0"]
       interval: 5s
@@ -291,9 +304,10 @@ services:
 
   # Cast - publisher orchestrator and native Magma Service303 endpoint.
   # Host networking is required for the multicast egress path. blockcastd
-  # reaches GetMetrics at cast:50054 through the host-gateway alias above.
+  # reaches GetMetrics at cast:50054 via the `cast: host-gateway` extra_hosts
+  # alias on the blockcastd service in docker-compose.yml.
   cast:
-    <<: *managed
+    !!merge <<: *managed
     image: ${DOCKER_REGISTRY:-blockcast/}cast:${IMAGE_VERSION:-stable}
     container_name: cast
     hostname: cast
@@ -312,13 +326,17 @@ services:
       CAST_TLS_CERT: ${CAST_TLS_CERT:-/var/opt/magma/certs/gateway.crt}
       CAST_TLS_KEY: ${CAST_TLS_KEY:-/var/opt/magma/certs/gateway.key}
       CAST_HOST_NETWORK: "true"
-      CAST_SERVICE303_LISTEN_ADDR: ${CAST_SERVICE303_LISTEN_ADDR:-0.0.0.0:50054}
+      # 0.0.0.0 is required: blockcastd reaches cast via the host-gateway
+      # bridge IP, so a loopback bind would break polling. On host networking
+      # this exposes the unauthenticated Service303 gRPC surface on every host
+      # interface — the host firewall must keep 50054 off public interfaces.
+      CAST_SERVICE303_LISTEN_ADDR: "0.0.0.0:50054"
       CAST_RESTART_ON_FAILURE: ${CAST_RESTART_ON_FAILURE:-true}
       CAST_RESTART_DELAY: ${CAST_RESTART_DELAY:-5}
       CAST_MAX_RESTARTS: ${CAST_MAX_RESTARTS:-0}
       RUST_LOG: ${RUST_LOG:-info,cast=info}
     labels:
-      <<: *labels
+      !!merge <<: *labels
       service.type: "cast"
 
   # Traffic Router - Authoritative DNS for *.bcast.id

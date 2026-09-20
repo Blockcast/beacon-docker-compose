@@ -50,6 +50,31 @@ services:
     !!merge <<: *service
     container_name: blockcastd
     command: /usr/bin/blockcastd -logtostderr=true -v=0
+    # Certbot renewal scheduler (BLO-31744). Scoped to blockcastd deliberately,
+    # NOT to the shared *service anchor: every service using that anchor runs the
+    # same image and the same entrypoint, so anchoring these would start one
+    # scheduler per container, all racing on the same certbot config dir.
+    # Off unless GATEWAY_CERTBOT_ENABLED=true in .env; LE_ZONE and
+    # CERTIFIER_ACME_ENDPOINT are then both required — the scheduler refuses to
+    # start without them rather than looping against an unsatisfiable config.
+    environment:
+      GATEWAY_CERTBOT_ENABLED: ${GATEWAY_CERTBOT_ENABLED:-false}
+      LE_ZONE: ${LE_ZONE:-}
+      CERTIFIER_ACME_ENDPOINT: ${CERTIFIER_ACME_ENDPOINT:-}
+      # Stable identity. REQUIRED when certbot is enabled — this key is always
+      # passed, so it arrives present-but-empty rather than unset and the
+      # entrypoint's emptiness check fails the container. There is no usable
+      # default on either surface: a Deployment's hostname is the pod name and
+      # changes on every rollout, and compose never falls through to the
+      # $(hostname) fallback in gateway-certbot-issue.sh.
+      GATEWAY_FQDN: ${GATEWAY_FQDN:-}
+      CERTBOT_SERVER: ${CERTBOT_SERVER:-}
+      CERTBOT_EMAIL: ${CERTBOT_EMAIL:-}
+    # Cast uses host networking for multicast and therefore is not present in
+    # Docker's bridge DNS. Keep the canonical service-registry name (`cast`)
+    # resolvable from blockcastd without adding a proxy or scrape path.
+    extra_hosts:
+      - "cast:host-gateway"
     labels:
       blockcast.node: "true"
       managed: "true"
