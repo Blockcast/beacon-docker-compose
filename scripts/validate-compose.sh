@@ -61,17 +61,16 @@ OPERATOR_ONLY=(luks relay)
 # the run just as loudly as a passing set that breaks. That is what stops it
 # silently becoming a permanent allowlist.
 #
-# MECHANISM, so the pin is actionable rather than just a label: the `multicast`
-# PROFILE activates relay-caddy (profiles: [caddy, multicast]), not the
-# multicast service -- that already runs under `managed` via x-managed. So on an
-# ats/varnish backend the profile adds a SECOND cache backend, and all three
-# inherit x-relay-cache, so they collide on `container_name: relay` and on
-# ports 80/443: `services.relay: container name "relay" is already in use`.
-# Both sets are gateway-reachable (getCDNConfig defaults to "ats").
-declare -A EXPECTED_FAIL=(
-  ["managed ats multicast"]="BLO-34364"
-  ["managed varnish multicast"]="BLO-34364"
-)
+# Currently EMPTY by design -- nothing is pinned, so every REACHABLE set below
+# is asserted to resolve. Give each new entry its own mechanism string so the
+# failure text is derived from the entry rather than hardcoded below.
+#
+# Last entries removed by BLO-34364, which took "multicast" out of relay-caddy's
+# profile list. Until then "managed ats multicast" and "managed varnish
+# multicast" both failed: the `multicast` PROFILE activated relay-caddy, not the
+# multicast service, so on an ats/varnish backend it added a SECOND cache
+# backend and the two collided on `container_name: relay` and ports 80/443.
+declare -A EXPECTED_FAIL=()
 
 # --- Coverage guard ---------------------------------------------------------
 # Enumerate the profiles the manifests actually declare and assert the matrix
@@ -182,12 +181,11 @@ check() { # check <label>   -- label is a space-separated profile set
   if [[ -n "$want" ]]; then
     if (( got == 0 )); then
       echo "FAIL  [$label] now resolves, but is pinned as broken under $want."
-      echo "      Confirm the mechanism is actually gone before editing the pin:"
-      echo "      both pinned sets fail on two cache backends colliding over"
-      echo "      container_name 'relay'. If that is genuinely fixed, remove the"
-      echo "      entry from EXPECTED_FAIL. If instead this set resolved to the"
-      echo "      no-profile baseline, the profile names are not reaching compose"
-      echo "      -- compose ignores an unknown --profile silently."
+      echo "      Confirm the mechanism is actually gone before editing the pin --"
+      echo "      the entry's own comment in EXPECTED_FAIL states it. If it is"
+      echo "      genuinely fixed, remove the entry. If instead this set resolved"
+      echo "      to the no-profile baseline, the profile names are not reaching"
+      echo "      compose -- compose ignores an unknown --profile silently."
       return 1
     fi
     echo "known [$label] rc=$got (tracked by $want): $first"

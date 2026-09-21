@@ -323,7 +323,7 @@ services:
     profiles:
       - varnish
 
-  # Caddy backend (--profile caddy or --profile multicast)
+  # Caddy backend (--profile caddy)
   relay-caddy:
     <<: *relay-cache
     image: ${DOCKER_REGISTRY:-blockcast/}relay-caddy:${IMAGE_VERSION:-stable}
@@ -342,7 +342,6 @@ services:
       - postgres
     profiles:
       - caddy
-      - multicast
 
   # ==========================================================================
   # MAXMIND ASN DATABASE SYNC
@@ -588,8 +587,12 @@ services:
       <<: *labels
       service.type: "moq-relay"
 
-  # Multicast - MAHP receiver/sender (standalone for ATS/Varnish backends)
-  # When caddy backend is active, multicast is absorbed into relay-caddy via profiles
+  # Multicast - MAHP receiver/sender.
+  # Merges x-managed, so at the compose layer this runs under EVERY
+  # gateway-reachable profile set, caddy included. No profile ever gated it.
+  # Absorption into relay-caddy is enforced one layer up, in magma:
+  # compose_manager's getEnabledServices drops "multicast" from the service
+  # list when cache_backend == "caddy", so the service is never rendered.
   multicast:
     <<: *managed
     image: ${DOCKER_REGISTRY:-blockcast/}multicast:${IMAGE_VERSION:-stable}
