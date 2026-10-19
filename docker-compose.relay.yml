@@ -53,6 +53,12 @@ x-relay-cache: &relay-cache
     relay:
       aliases:
         - control-proxy
+        # Base service_registry.yml (every image stage, incl. prod :stable) names
+        # t3c-daemon:50053. On compose t3c-daemon runs inside the relay-ats
+        # container, so give it that DNS name here instead of baking a compose-only
+        # registry module into the image (BLO-47646). metricsd polling of it is
+        # already gated on the relay dynamic service (blockcastd.yml).
+        - t3c-daemon
   ports:
     - "80:80"
     - "443:443"
@@ -82,11 +88,6 @@ services:
     networks:
       - default
       - relay
-    # Cast uses host networking for multicast and therefore is not present in
-    # Docker's bridge DNS. Keep the canonical service-registry name (`cast`)
-    # resolvable from blockcastd without adding a proxy or scrape path.
-    extra_hosts:
-      - "cast:host-gateway"
 
   # When relay cache is running, it aliases as "control-proxy" on the relay network.
   # When relay is NOT enabled (standalone control-proxy mode), the base control-proxy
