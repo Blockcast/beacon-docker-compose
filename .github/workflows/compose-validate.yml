@@ -28,7 +28,9 @@ jobs:
     # arc-light has the docker CLI and compose v2 plugin but no daemon.
     # `docker compose config` is parse-only and never dials the daemon, so this
     # lane needs no privileged pool. Verified against a dead DOCKER_HOST.
-    runs-on: arc-light
+    runs-on:
+      group: default-tools
+      labels: arc-light
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
