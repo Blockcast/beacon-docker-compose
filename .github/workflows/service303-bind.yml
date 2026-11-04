@@ -159,9 +159,15 @@ jobs:
           echo "DOCKER_GID=$(stat -c %g /var/run/docker.sock)" >> "$GITHUB_ENV"
           export DOCKER_GID=$(stat -c %g /var/run/docker.sock)
           echo "C=docker compose -p beacon-docker-compose --project-directory /etc/magma/compose -f /etc/magma/compose/v1/docker-compose.yml -f /etc/magma/compose/v1/docker-compose.relay.yml -f /etc/magma/compose/docker-compose.override.yml --profile managed" >> "$GITHUB_ENV"
-          docker compose -p beacon-docker-compose --project-directory "$D" \
-            -f "$D/v1/docker-compose.yml" -f "$D/v1/docker-compose.relay.yml" \
-            -f "$D/docker-compose.override.yml" --profile managed up -d --no-deps blockcastd
+          # Create blockcastd with the compose bundled in its own image (the one
+          # compose_manager runs), not the runner's: a different compose
+          # version hashes the same block differently (bind create_host_path),
+          # which alone makes blockcastd "diverged" and confounds the control.
+          IMG=$(docker compose -f docker-compose.yml config --format json | jq -r .services.blockcastd.image)
+          docker pull -q "$IMG"
+          docker run --rm -u 0 -e HOME="$HOME" -e DOCKER_GID \
+            -v /var/run/docker.sock:/var/run/docker.sock -v "$D":/etc/magma/compose \
+            --entrypoint sh "$IMG" -c "$(grep '^C=' "$GITHUB_ENV" | cut -d= -f2-) up -d --no-deps blockcastd"
           docker pull -q "blockcast/amtr:$AMTR_TAG"
           sleep 5
           docker exec blockcastd sh -c 'id; docker version --format "cli {{.Client.Version}} server {{.Server.Version}}"; docker compose version'
