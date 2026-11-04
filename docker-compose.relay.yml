@@ -68,6 +68,10 @@ x-relay-cache: &relay-cache
     relay:
       aliases:
         - control-proxy
+        # service_registry name blockcastd's metricsd polls for the relay's
+        # Service303 (:50053): t3c-daemon on ATS/Varnish, the service303 app
+        # on Caddy. BLO-51838.
+        - t3c-daemon
   ports:
     - "80:80"
     - "443:443"
@@ -102,6 +106,8 @@ services:
     # resolvable from blockcastd without adding a proxy or scrape path.
     extra_hosts:
       - "cast:host-gateway"
+      # amt-relay is host-networked too; metricsd polls amt-relay:9191 (BLO-51838).
+      - "amt-relay:host-gateway"
 
   # When relay cache is running, it aliases as "control-proxy" on the relay network.
   # When relay is NOT enabled (standalone control-proxy mode), the base control-proxy
@@ -337,6 +343,10 @@ services:
     environment:
       <<: *relay-env
       CADDY_ADMIN: ""
+      # Mount the service303 app so metricsd can forward tc_interface_out_bytes
+      # and tc_cache_hits/misses to orc8r (BLO-51838). Caddy relay only: ATS
+      # and Varnish serve 50053 from t3c-daemon.
+      RELAY_SERVICE303_ADDR: ":50053"
       DB_FILE: "postgresql://${POSTGRES_USER:-caddy}:${POSTGRES_PASSWORD:-blockcast}@host.docker.internal:5432/${POSTGRES_DB:-multicast}"
     depends_on:
       - postgres
@@ -548,6 +558,10 @@ services:
       GNMI_TLS_SKIP_VERIFY: ${GNMI_TLS_SKIP_VERIFY:-true}
       JUNIPER_RELAY_IP: ${JUNIPER_RELAY_IP:-}
       IPFIX_PORT: ${IPFIX_PORT:-4739}
+      # Service303 for blockcastd's metricsd (amt_relay_* to orc8r); the
+      # image defaults it off. Reached via the amt-relay:host-gateway alias.
+      SERVICE303_ENABLED: "true"
+      SERVICE303_ADDR: ":9191"
     labels:
       <<: *labels
       service.type: "amt-relay"
@@ -583,6 +597,9 @@ services:
       RELAY_TO_KEY: ${RELAY_TO_KEY:-/var/opt/magma/certs/controller.key}
       RELAY_TO_INSECURE: ${RELAY_TO_INSECURE:-false}
       RELAY_HOSTNAME: ${RELAY_HOSTNAME:-}
+      # Service303 for blockcastd's metricsd (moq_relay_* to orc8r). Absent
+      # this env the relay starts no listener. Bridge network only.
+      RELAY_SERVICE303_LISTEN_ADDR: "0.0.0.0:50055"
     labels:
       <<: *labels
       service.type: "moq-relay"
