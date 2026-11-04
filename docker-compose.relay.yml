@@ -532,7 +532,13 @@ services:
       - NET_RAW
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+      # amt-astats' billing WAL. Its default (/var/lib/amt-astats/wal) is not in
+      # the image and the container runs as uid 999, so it exits 1 on
+      # "mkdir /var/lib/amt-astats: permission denied". /app/data is 999-owned
+      # in the image, and a named volume inherits that on first mount.
+      - amt-astats-data:/app/data
     environment:
+      AMT_ASTATS_WAL_DIR: /app/data/wal
       AMT_RELAY_ADDR: "0.0.0.0"
       AMT_RELAY_PORT: "2268"
       AMT_ANYCAST_PREFIX: ${AMT_ANYCAST_PREFIX:-192.52.193.0/24}
@@ -617,6 +623,7 @@ networks:
     enable_ipv6: true
 
 volumes:
+  amt-astats-data:
   blockcastd-data:
   cache-shared:
   relay-vcl:
