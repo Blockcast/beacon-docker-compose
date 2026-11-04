@@ -105,6 +105,9 @@ services:
     # resolvable from blockcastd without adding a proxy or scrape path.
     extra_hosts:
       - "cast:host-gateway"
+      # amt-relay is host-networked too; its Service303 binds the host-gateway
+      # address only (BLO-51855).
+      - "amt-relay:host-gateway"
 
   # When relay cache is running, it aliases as "control-proxy" on the relay network.
   # When relay is NOT enabled (standalone control-proxy mode), the base control-proxy

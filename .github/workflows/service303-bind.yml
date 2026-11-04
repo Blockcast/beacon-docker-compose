@@ -1,0 +1,125 @@
+name: service303-bind
+
+# BLO-51855 AC3/AC4, measured on a real docker host (no operator host is
+# available to agents). amt-relay and cast are host-networked on gateways, so
+# whatever address their Service303 binds is exposed on every interface that
+# address lives on. This job brings amt-relay up from docker-compose.relay.yml
+# with the manifest's own env and checks:
+#   - the 9191 listener is the host-gateway address only, not 0.0.0.0/[::]
+#   - a container on a user-defined network (like blockcastd's) reaches it as
+#     amt-relay:9191 via host-gateway, and GetServiceInfo returns grpc-status 0
+#   - StopService is refused (grpc-status 7) and the relay keeps running
+#   - the runner's external IP and loopback do NOT answer on 9191
+# and records cast's 50054 bind as found.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - docker-compose.yml
+      - docker-compose.relay.yml
+      - .github/workflows/service303-bind.yml
+  workflow_dispatch:
+    inputs:
+      amtr_tag:
+        description: blockcast/amtr tag (must contain linux-amt 6192a896)
+        default: sha-6192a8969cd6646ba99484ba56a3c8914b2d82b9
+      cast_tag:
+        description: blockcast/cast tag
+        default: stable
+
+concurrency:
+  group: service303-bind-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bind:
+    # GitHub-hosted on purpose: a real VM with a real docker0 (172.17.0.1),
+    # i.e. the same shape as an operator compose host. ARC pods are not.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AMTR_TAG: ${{ inputs.amtr_tag || 'sha-6192a8969cd6646ba99484ba56a3c8914b2d82b9' }}
+      CAST_TAG: ${{ inputs.cast_tag || 'stable' }}
+      FILES: -f docker-compose.yml -f docker-compose.relay.yml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: blockcastd resolves amt-relay via host-gateway
+        run: |
+          set -euo pipefail
+          docker compose $FILES --profile managed config --format json \
+            | jq -e '.services.blockcastd.extra_hosts | tostring | test("amt-relay\\W+host-gateway")'
+
+      - name: Start amt-relay from the manifest
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.blockcast/certs"
+          IMAGE_VERSION="$AMTR_TAG" docker compose $FILES --profile managed up -d --no-deps amt-relay
+          docker image inspect "blockcast/amtr:$AMTR_TAG" --format 'image {{index .RepoDigests 0}}'
+          for i in $(seq 1 90); do
+            sudo ss -ltn | grep -q ':9191 ' && break
+            sleep 2
+          done
+          docker logs relay-amt-relay 2>&1 | grep -iE 'service303|COMBINED' || true
+
+      - name: 9191 is bound to the host-gateway address only
+        run: |
+          set -euo pipefail
+          GW=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
+          echo "docker0 gateway: $GW"
+          sudo ss -ltnp | grep ':9191 ' | tee /tmp/ss9191
+          awk '{print $4}' /tmp/ss9191 | sort -u > /tmp/addrs
+          [ "$(cat /tmp/addrs)" = "$GW:9191" ] || { echo "FAIL: expected only $GW:9191"; exit 1; }
+
+      - name: Gateway path works; StopService refused
+        run: |
+          set -euo pipefail
+          printf '\0\0\0\0\0' > /tmp/void   # gRPC frame of an empty magma.orc8r.Void
+          docker network create s303-probe >/dev/null
+          call() {
+            docker run --rm --network s303-probe --add-host amt-relay:host-gateway \
+              -v /tmp/void:/void:ro curlimages/curl:8.10.1 \
+              -sS -v --http2-prior-knowledge -o /dev/null \
+              -H 'content-type: application/grpc' -H 'te: trailers' \
+              --data-binary @/void "http://amt-relay:9191/magma.orc8r.Service303/$1" 2>&1 \
+              | grep -i 'grpc-status' | tail -1
+          }
+          info=$(call GetServiceInfo); echo "GetServiceInfo: $info"
+          echo "$info" | grep -q 'grpc-status: 0' || { echo "FAIL: GetServiceInfo"; exit 1; }
+          stop=$(call StopService); echo "StopService: $stop"
+          echo "$stop" | grep -q 'grpc-status: 7' || { echo "FAIL: StopService not refused"; exit 1; }
+          sleep 3
+          [ "$(docker inspect -f '{{.State.Running}}' relay-amt-relay)" = true ]
+          sudo ss -ltn | grep -q ':9191 ' || { echo "FAIL: listener gone after StopService"; exit 1; }
+
+      - name: External IP and loopback do not answer on 9191
+        run: |
+          set -uo pipefail
+          EXT=$(ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
+          for a in "$EXT" 127.0.0.1; do
+            if timeout 5 bash -c "exec 3<>/dev/tcp/$a/9191" 2>/dev/null; then
+              echo "FAIL: $a:9191 accepted a connection"; exit 1
+            fi
+            echo "ok: $a:9191 refused"
+          done
+
+      - name: cast 50054 bind as shipped (record, do not gate)
+        if: always()
+        run: |
+          set -uo pipefail
+          docker compose $FILES --profile managed config --format json \
+            | jq -r '.services.cast.environment.CAST_SERVICE303_LISTEN_ADDR' | sed 's/^/manifest CAST_SERVICE303_LISTEN_ADDR=/'
+          IMAGE_VERSION="$CAST_TAG" docker compose $FILES --profile managed up -d --no-deps cast || echo "cast: could not start"
+          for i in $(seq 1 30); do sudo ss -ltn | grep -q ':50054 ' && break; sleep 2; done
+          sudo ss -ltnp | grep ':50054 ' || echo "cast: no 50054 listener (live measurement unavailable; see manifest value above)"
+          docker logs cast 2>&1 | tail -20 || true
+
+      - name: amt-relay logs
+        if: failure()
+        run: docker logs relay-amt-relay 2>&1 | tail -80
