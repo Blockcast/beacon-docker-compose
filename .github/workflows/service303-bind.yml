@@ -122,4 +122,8 @@ jobs:
 
       - name: amt-relay logs
         if: failure()
-        run: docker logs relay-amt-relay 2>&1 | tail -80
+        run: |
+          docker logs relay-amt-relay 2>&1 | tail -80
+          docker run --rm --entrypoint sh "blockcast/amtr:$AMTR_TAG" -c 'id; ls -ldn /app /app/data /var/lib' || true
+          docker volume ls
+          docker run --rm -v beacon-docker-compose_amt-astats-data:/d alpine ls -lan /d || true
