@@ -547,7 +547,6 @@ services:
       GNMI_TLS_KEY: /var/opt/magma/certs/gateway.key
       GNMI_TLS_SKIP_VERIFY: ${GNMI_TLS_SKIP_VERIFY:-true}
       JUNIPER_RELAY_IP: ${JUNIPER_RELAY_IP:-}
-      IPFIX_PORT: ${IPFIX_PORT:-4739}
     labels:
       <<: *labels
       service.type: "amt-relay"
