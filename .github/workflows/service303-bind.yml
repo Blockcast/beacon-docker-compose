@@ -166,6 +166,19 @@ jobs:
           sleep 5
           docker exec blockcastd sh -c 'id; docker version --format "cli {{.Client.Version}} server {{.Server.Version}}"; docker compose version'
 
+      - name: Why would blockcastd diverge? (hash, host vs in-container)
+        run: |
+          set +e -uo pipefail
+          D="$HOME/.blockcast/compose"
+          H="docker compose -p beacon-docker-compose --project-directory $D -f $D/v1/docker-compose.yml -f $D/v1/docker-compose.relay.yml -f $D/docker-compose.override.yml --profile managed"
+          echo "label:  $(docker inspect -f '{{index .Config.Labels "com.docker.compose.config-hash"}}' blockcastd)"
+          echo "host:   $($H config --hash blockcastd)"
+          echo "inside: $(docker exec -e HOME="$HOME" -e IMAGE_VERSION="$AMTR_TAG" -e DOCKER_GID blockcastd sh -c "$C config --hash blockcastd")"
+          $H config --format json | jq -S .services.blockcastd > /tmp/host.json
+          docker exec -e HOME="$HOME" -e IMAGE_VERSION="$AMTR_TAG" -e DOCKER_GID blockcastd sh -c "$C config --format json" | jq -S .services.blockcastd > /tmp/inside.json
+          diff /tmp/host.json /tmp/inside.json && echo "resolved blockcastd config identical"
+          docker exec blockcastd env | sort | grep -vE 'TOKEN|KEY|SECRET' | head -40
+
       - name: Control - unchanged blockcastd block
         run: |
           set +e -uo pipefail
