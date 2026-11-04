@@ -107,8 +107,8 @@ services:
     extra_hosts:
       - "cast:host-gateway"
       # amt-relay is host-networked too; metricsd polls amt-relay:9191 (BLO-51838).
-      # Resolves unconditionally, like `cast`: with the amt-relay profile off or
-      # its Service303 disabled, nothing listens on 9191 and the poll just fails.
+      # Nothing listens there until amt-astats' Service303 is safe to enable on
+      # operator hosts (BLO-51855); until then the poll just fails.
       - "amt-relay:host-gateway"
 
   # When relay cache is running, it aliases as "control-proxy" on the relay network.
@@ -561,13 +561,6 @@ services:
       GNMI_TLS_SKIP_VERIFY: ${GNMI_TLS_SKIP_VERIFY:-true}
       JUNIPER_RELAY_IP: ${JUNIPER_RELAY_IP:-}
       IPFIX_PORT: ${IPFIX_PORT:-4739}
-      # Service303 for blockcastd's metricsd (amt_relay_* to orc8r), reached via
-      # the amt-relay:host-gateway alias. OPT-IN: it is plaintext gRPC on the
-      # host network and StopService halts amt-astats (billing flush). Enable
-      # with AMT_SERVICE303_ENABLED=true only where 9191 is firewalled, or bind
-      # it to the docker bridge address with AMT_SERVICE303_ADDR.
-      SERVICE303_ENABLED: ${AMT_SERVICE303_ENABLED:-false}
-      SERVICE303_ADDR: ${AMT_SERVICE303_ADDR:-:9191}
     labels:
       <<: *labels
       service.type: "amt-relay"
