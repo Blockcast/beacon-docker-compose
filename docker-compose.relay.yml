@@ -560,8 +560,11 @@ services:
       IPFIX_PORT: ${IPFIX_PORT:-4739}
       # Service303 for blockcastd's metricsd (amt_relay_* to orc8r); the
       # image defaults it off. Reached via the amt-relay:host-gateway alias.
+      # ⚠ Plaintext gRPC on the host network, StopService included — same
+      # exposure as cast:50054. Firewall 9191 from outside, or bind it to the
+      # docker bridge address with AMT_SERVICE303_ADDR.
       SERVICE303_ENABLED: "true"
-      SERVICE303_ADDR: ":9191"
+      SERVICE303_ADDR: ${AMT_SERVICE303_ADDR:-:9191}
     labels:
       <<: *labels
       service.type: "amt-relay"
