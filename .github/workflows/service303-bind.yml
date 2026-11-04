@@ -127,3 +127,64 @@ jobs:
           docker run --rm --entrypoint sh "blockcast/amtr:$AMTR_TAG" -c 'id; ls -ldn /app /app/data /var/lib' || true
           docker volume ls
           docker run --rm -v beacon-docker-compose_amt-astats-data:/d alpine ls -lan /d || true
+
+  # BLO-51855 gate on the socket re-scope: compose_manager runs, from INSIDE
+  # blockcastd, `docker compose ... up -d <svc> --remove-orphans` (no
+  # --no-deps; magma manager.go startComposeServiceWithForce). Managed services
+  # depend_on blockcastd, so if blockcastd's own block changes, compose may
+  # recreate blockcastd as a diverged dependency and kill itself mid-recreate.
+  # Control: unchanged blockcastd block. Case: blockcastd gains a volume (what
+  # the socket shape does). Records blockcastd's container ID/state each time.
+  self-recreate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AMTR_TAG: ${{ inputs.amtr_tag || 'sha-6192a8969cd6646ba99484ba56a3c8914b2d82b9' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Lay out the gateway compose dir and start blockcastd
+        run: |
+          set -euo pipefail
+          D="$HOME/.blockcast/compose"
+          mkdir -p "$D/v1" "$HOME/.blockcast/certs" "$HOME/.blockcast/snowflake"
+          cp docker-compose.yml docker-compose.relay.yml "$D/v1/"
+          # blockcastd's binary needs a gateway cert; keep the container up
+          # without it. Same override in every run, so it is not the diff.
+          printf 'services:\n  blockcastd:\n    command: ["sleep", "infinity"]\n' > "$D/docker-compose.override.yml"
+          echo "C=docker compose -p beacon-docker-compose --project-directory /etc/magma/compose -f /etc/magma/compose/v1/docker-compose.yml -f /etc/magma/compose/v1/docker-compose.relay.yml -f /etc/magma/compose/docker-compose.override.yml --profile managed" >> "$GITHUB_ENV"
+          docker compose -p beacon-docker-compose --project-directory "$D" \
+            -f "$D/v1/docker-compose.yml" -f "$D/v1/docker-compose.relay.yml" \
+            -f "$D/docker-compose.override.yml" --profile managed up -d --no-deps blockcastd
+          docker pull -q "blockcast/amtr:$AMTR_TAG"
+          sleep 5
+          docker exec blockcastd sh -c 'docker version --format "cli {{.Client.Version}}"; docker compose version'
+
+      - name: Control - unchanged blockcastd block
+        run: |
+          set -uo pipefail
+          before=$(docker inspect -f '{{.Id}} {{.State.Status}}' blockcastd); echo "before: $before"
+          docker exec -e HOME="$HOME" -e IMAGE_VERSION="$AMTR_TAG" blockcastd sh -c "$C up -d amt-relay --remove-orphans"; echo "exit: $?"
+          sleep 10
+          after=$(docker inspect -f '{{.Id}} {{.State.Status}}' blockcastd 2>&1); echo "after:  $after"
+          docker ps -a --format '{{.Names}} {{.ID}} {{.Status}}' | grep -E 'blockcastd|amt-relay'
+          [ "$before" = "$after" ] || { echo "FAIL: control recreated blockcastd; measurement confounded"; exit 1; }
+
+      - name: Case - blockcastd block changed (adds a named volume)
+        run: |
+          set -uo pipefail
+          D="$HOME/.blockcast/compose"
+          printf 'services:\n  blockcastd:\n    command: ["sleep", "infinity"]\n    volumes:\n      - s303-probe:/run/s303-probe\nvolumes:\n  s303-probe: {}\n' > "$D/docker-compose.override.yml"
+          before=$(docker inspect -f '{{.Id}} {{.State.Status}}' blockcastd); echo "before: $before"
+          docker exec -e HOME="$HOME" -e IMAGE_VERSION="$AMTR_TAG" blockcastd sh -c "$C up -d amt-relay --remove-orphans"; echo "exit: $?"
+          sleep 15
+          after=$(docker inspect -f '{{.Id}} {{.State.Status}}' blockcastd 2>&1); echo "after:  $after"
+          docker ps -a --format '{{.Names}} {{.ID}} {{.Status}}' | grep -E 'blockcastd|amt-relay' || true
+          if [ "$before" = "$after" ]; then
+            echo "RESULT: no-recreate (same ID, still running)"
+          else
+            echo "RESULT: blockcastd recreated or stopped by its own compose call"
+            exit 1
+          fi
