@@ -154,19 +154,23 @@ jobs:
           # blockcastd's binary needs a gateway cert; keep the container up
           # without it. Same override in every run, so it is not the diff.
           printf 'services:\n  blockcastd:\n    command: ["sleep", "infinity"]\n' > "$D/docker-compose.override.yml"
+          # Operators set DOCKER_GID to the host's docker.sock group (install.sh);
+          # blockcastd's unprivileged user reaches the socket through it.
+          echo "DOCKER_GID=$(stat -c %g /var/run/docker.sock)" >> "$GITHUB_ENV"
+          export DOCKER_GID=$(stat -c %g /var/run/docker.sock)
           echo "C=docker compose -p beacon-docker-compose --project-directory /etc/magma/compose -f /etc/magma/compose/v1/docker-compose.yml -f /etc/magma/compose/v1/docker-compose.relay.yml -f /etc/magma/compose/docker-compose.override.yml --profile managed" >> "$GITHUB_ENV"
           docker compose -p beacon-docker-compose --project-directory "$D" \
             -f "$D/v1/docker-compose.yml" -f "$D/v1/docker-compose.relay.yml" \
             -f "$D/docker-compose.override.yml" --profile managed up -d --no-deps blockcastd
           docker pull -q "blockcast/amtr:$AMTR_TAG"
           sleep 5
-          docker exec blockcastd sh -c 'docker version --format "cli {{.Client.Version}}"; docker compose version'
+          docker exec blockcastd sh -c 'id; docker version --format "cli {{.Client.Version}} server {{.Server.Version}}"; docker compose version'
 
       - name: Control - unchanged blockcastd block
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           before=$(docker inspect -f '{{.Id}} {{.State.Status}}' blockcastd); echo "before: $before"
-          docker exec -e HOME="$HOME" -e IMAGE_VERSION="$AMTR_TAG" blockcastd sh -c "$C up -d amt-relay --remove-orphans"; echo "exit: $?"
+          docker exec -e HOME="$HOME" -e IMAGE_VERSION="$AMTR_TAG" -e DOCKER_GID blockcastd sh -c "$C up -d amt-relay --remove-orphans"; echo "exit: $?"
           sleep 10
           after=$(docker inspect -f '{{.Id}} {{.State.Status}}' blockcastd 2>&1); echo "after:  $after"
           docker ps -a --format '{{.Names}} {{.ID}} {{.Status}}' | grep -E 'blockcastd|amt-relay'
@@ -174,11 +178,11 @@ jobs:
 
       - name: Case - blockcastd block changed (adds a named volume)
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           D="$HOME/.blockcast/compose"
           printf 'services:\n  blockcastd:\n    command: ["sleep", "infinity"]\n    volumes:\n      - s303-probe:/run/s303-probe\nvolumes:\n  s303-probe: {}\n' > "$D/docker-compose.override.yml"
           before=$(docker inspect -f '{{.Id}} {{.State.Status}}' blockcastd); echo "before: $before"
-          docker exec -e HOME="$HOME" -e IMAGE_VERSION="$AMTR_TAG" blockcastd sh -c "$C up -d amt-relay --remove-orphans"; echo "exit: $?"
+          docker exec -e HOME="$HOME" -e IMAGE_VERSION="$AMTR_TAG" -e DOCKER_GID blockcastd sh -c "$C up -d amt-relay --remove-orphans"; echo "exit: $?"
           sleep 15
           after=$(docker inspect -f '{{.Id}} {{.State.Status}}' blockcastd 2>&1); echo "after:  $after"
           docker ps -a --format '{{.Names}} {{.ID}} {{.Status}}' | grep -E 'blockcastd|amt-relay' || true
