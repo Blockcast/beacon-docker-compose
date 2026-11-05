@@ -67,8 +67,8 @@ jobs:
           # lacks. Do the same here so the ownership amt-relay (uid 999) ends
           # up with is the one the field gets.
           VOL="$(jq -r .name /tmp/cfg.json)_amt-s303"
-          docker volume create "$VOL" >/dev/null
-          docker run --rm -v "$VOL:/run/amt-s303" alpine true
+          IMAGE_VERSION="$AMTR_TAG" docker compose $FILES --profile managed create --no-deps amt-relay   # creates the volume as declared
+          docker run -d --name first-mounter -v "$VOL:/run/amt-s303" alpine sleep 600
           IMAGE_VERSION="$AMTR_TAG" docker compose $FILES --profile managed up -d --no-deps amt-relay
           docker image inspect "blockcast/amtr:$AMTR_TAG" --format 'image {{index .RepoDigests 0}}'
           echo "VOL=$VOL" >> "$GITHUB_ENV"
