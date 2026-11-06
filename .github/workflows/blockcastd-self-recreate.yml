@@ -30,9 +30,9 @@ permissions:
 
 jobs:
   self-recreate:
-    runs-on:
-      group: default-tools
-      labels: arc-light
+    # This probe starts and inspects containers, so it needs the dedicated
+    # on-prem Docker-in-Docker ARC pool rather than the daemon-free light pool.
+    runs-on: arc-dind
     timeout-minutes: 15
     env:
       AMTR_TAG: sha-6192a8969cd6646ba99484ba56a3c8914b2d82b9
@@ -47,6 +47,11 @@ jobs:
           # usage: probe.sh <label> <expect: same|killed> <blockcastd-block-yaml-or-empty> [readd-edge]
           set +e -uo pipefail
           label=$1 expect=$2 extra=$3 readd=${4:-}
+          # arc-dind shares /home/runner/_work with its daemon sidecar, but
+          # not the runner container's normal HOME. Keep every bind source on
+          # that shared mount so dockerd can see the compose files and test
+          # cert directories.
+          export HOME="${RUNNER_TEMP}/compose-home"
           D="$HOME/.blockcast/compose"
           IMG=$(docker compose -f docker-compose.yml config --format json | jq -r .services.blockcastd.image)
           C="docker compose -p beacon-docker-compose --project-directory /etc/magma/compose -f /etc/magma/compose/v1/docker-compose.yml -f /etc/magma/compose/v1/docker-compose.relay.yml -f /etc/magma/compose/docker-compose.override.yml --profile managed"
