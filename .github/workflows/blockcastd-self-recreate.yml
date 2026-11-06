@@ -30,9 +30,14 @@ permissions:
 
 jobs:
   self-recreate:
+    # The job uses a privileged DinD sidecar. Never schedule fork-controlled
+    # code there; same-repo PRs and explicit manual runs are trusted here.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
     # This probe starts and inspects containers, so it needs the dedicated
     # on-prem Docker-in-Docker ARC pool rather than the daemon-free light pool.
-    runs-on: arc-dind
+    runs-on:
+      group: default-tools
+      labels: arc-dind
     timeout-minutes: 15
     env:
       AMTR_TAG: sha-6192a8969cd6646ba99484ba56a3c8914b2d82b9
