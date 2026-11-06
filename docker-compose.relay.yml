@@ -105,6 +105,13 @@ services:
     # resolvable from blockcastd without adding a proxy or scrape path.
     extra_hosts:
       - "cast:host-gateway"
+    # amt-relay's Service303 is a unix socket on a shared volume, so no TCP
+    # port is opened on the (host-networked) relay (BLO-51855). Needs a gateway
+    # image with magma#2697 (SERVICE_REGISTRY_ADDR_<SVC>).
+    environment:
+      SERVICE_REGISTRY_ADDR_AMT_RELAY: unix:///run/amt-s303/s303.sock
+    volumes:
+      - amt-s303:/run/amt-s303
 
   # When relay cache is running, it aliases as "control-proxy" on the relay network.
   # When relay is NOT enabled (standalone control-proxy mode), the base control-proxy
@@ -532,6 +539,7 @@ services:
       - NET_RAW
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+      - amt-s303:/app/data
     environment:
       # amt-astats' billing WAL. Its default (/var/lib/amt-astats/wal) is not in
       # the image and the container runs as uid 999, so it exits 1 on
@@ -554,6 +562,12 @@ services:
       GNMI_TLS_KEY: /var/opt/magma/certs/gateway.key
       GNMI_TLS_SKIP_VERIFY: ${GNMI_TLS_SKIP_VERIFY:-true}
       JUNIPER_RELAY_IP: ${JUNIPER_RELAY_IP:-}
+      # Service303 for blockcastd's metricsd (amt_relay_* to orc8r, BLO-51838).
+      # Host-networked, so never a TCP bind: a unix socket on the amt-s303
+      # volume, reachable only by blockcastd (both uid 999).
+      # Needs amtr built from linux-amt >= dba55def (BLO-51855).
+      SERVICE303_ENABLED: ${AMT_SERVICE303_ENABLED:-true}
+      SERVICE303_ADDR: ${AMT_SERVICE303_ADDR:-unix:/app/data/s303.sock}
     labels:
       <<: *labels
       service.type: "amt-relay"
@@ -626,6 +640,14 @@ networks:
 volumes:
   blockcastd-data:
   cache-shared:
+  # amt-relay's Service303 socket (BLO-51855). tmpfs owned by uid 999 (both
+  # amt-relay and blockcastd), so ownership does not depend on which container
+  # mounts it first, and no stale socket survives a reboot.
+  amt-s303:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=999,gid=999,mode=0750,size=1m
   relay-vcl:
   postgres-data:
   tr-db:
