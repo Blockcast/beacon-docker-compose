@@ -30,7 +30,9 @@ permissions:
 
 jobs:
   self-recreate:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: default-tools
+      labels: arc-light
     timeout-minutes: 15
     env:
       AMTR_TAG: sha-6192a8969cd6646ba99484ba56a3c8914b2d82b9
