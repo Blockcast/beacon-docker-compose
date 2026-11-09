@@ -1,0 +1,111 @@
+name: blockcastd-self-recreate
+
+# BLO-51855. compose_manager (magma manager.go startComposeServiceWithForce)
+# runs `docker compose ... up -d <svc> --remove-orphans`, without --no-deps,
+# from INSIDE blockcastd. If a managed service depends_on blockcastd and
+# blockcastd's own block changed, compose recreates blockcastd as a diverged
+# dependency: it stops the container it is running in and blockcastd is left
+# Exited(137) with nothing to restart it. The manifest must carry no such edge.
+#
+#   control : unchanged block                       -> blockcastd untouched
+#   case    : block changed, manifest as shipped    -> blockcastd untouched (gate)
+#   negative: block changed, edge re-added          -> blockcastd killed (proves
+#             the case can fail)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - docker-compose.yml
+      - docker-compose.relay.yml
+      - .github/workflows/blockcastd-self-recreate.yml
+  workflow_dispatch:
+
+concurrency:
+  group: blockcastd-self-recreate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  self-recreate:
+    # The job uses a privileged DinD sidecar. Never schedule fork-controlled
+    # code there; same-repo PRs and explicit manual runs are trusted here.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
+    # This probe starts and inspects containers, so it needs the dedicated
+    # on-prem Docker-in-Docker ARC pool rather than the daemon-free light pool.
+    runs-on:
+      group: default-tools
+      labels: arc-dind
+    timeout-minutes: 15
+    env:
+      AMTR_TAG: sha-6192a8969cd6646ba99484ba56a3c8914b2d82b9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Probe helper
+        run: |
+          cat > /tmp/probe.sh <<'SH'
+          # usage: probe.sh <label> <expect: same|killed> <blockcastd-block-yaml-or-empty> [readd-edge]
+          set +e -uo pipefail
+          label=$1 expect=$2 extra=$3 readd=${4:-}
+          # arc-dind shares /home/runner/_work with its daemon sidecar, but
+          # not the runner container's normal HOME. Keep every bind source on
+          # that shared mount so dockerd can see the compose files and test
+          # cert directories.
+          export HOME="${RUNNER_TEMP}/compose-home"
+          D="$HOME/.blockcast/compose"
+          IMG=$(docker compose -f docker-compose.yml config --format json | jq -r .services.blockcastd.image)
+          C="docker compose -p beacon-docker-compose --project-directory /etc/magma/compose -f /etc/magma/compose/v1/docker-compose.yml -f /etc/magma/compose/v1/docker-compose.relay.yml -f /etc/magma/compose/docker-compose.override.yml --profile managed"
+          docker rm -f blockcastd relay-amt-relay >/dev/null 2>&1
+          rm -rf "$D"; mkdir -p "$D/v1" "$HOME/.blockcast/certs" "$HOME/.blockcast/snowflake"
+          cp docker-compose.yml docker-compose.relay.yml "$D/v1/"
+          if [ -n "$readd" ]; then
+            printf 'services:\n  amt-relay:\n    depends_on: [blockcastd]\n' > "$D/v1/edge.yml"
+            C="$C -f /etc/magma/compose/v1/edge.yml"
+          fi
+          # blockcastd's binary needs a gateway cert; sleep keeps the container up.
+          printf 'services:\n  blockcastd:\n    command: ["sleep", "infinity"]\n' > "$D/docker-compose.override.yml"
+          # Create blockcastd with the compose bundled in its image (the one
+          # compose_manager runs). The runner's compose hashes bind mounts
+          # differently (create_host_path), so it would read as diverged.
+          docker run --rm -u 0 -e HOME="$HOME" -e DOCKER_GID \
+            -v /var/run/docker.sock:/var/run/docker.sock -v "$D":/etc/magma/compose \
+            --entrypoint sh "$IMG" -c "$C up -d --no-deps blockcastd" >/dev/null 2>&1
+          sleep 3
+          [ -n "$extra" ] && printf 'services:\n  blockcastd:\n    command: ["sleep", "infinity"]\n%s\n' "$extra" > "$D/docker-compose.override.yml"
+          before=$(docker inspect -f '{{.Id}} {{.State.Status}}' blockcastd)
+          docker exec -e HOME="$HOME" -e IMAGE_VERSION="$AMTR_TAG" -e DOCKER_GID blockcastd \
+            sh -c "$C up -d amt-relay --remove-orphans" 2>&1 | grep blockcastd
+          echo "compose exit: ${PIPESTATUS[0]}"
+          sleep 10
+          after=$(docker inspect -f '{{.Id}} {{.State.Status}}' blockcastd 2>&1)
+          echo "$label: before=$before"
+          echo "$label: after =$after"
+          if [ "$before" = "$after" ]; then got=same; else got=killed; fi
+          echo "$label: blockcastd $got (expected $expect)"
+          [ "$got" = "$expect" ]
+          SH
+          echo "DOCKER_GID=$(stat -c %g /var/run/docker.sock)" >> "$GITHUB_ENV"
+          docker pull -q "$(docker compose -f docker-compose.yml config --format json | jq -r .services.blockcastd.image)"
+          docker pull -q "blockcast/amtr:$AMTR_TAG"
+
+      - name: Control - unchanged blockcastd block
+        run: bash /tmp/probe.sh control same ''
+
+      - name: Case - blockcastd block changed (gate)
+        run: |
+          bash /tmp/probe.sh case same '    volumes:
+                - s303-probe:/run/s303-probe
+          volumes:
+            s303-probe: {}'
+
+      - name: Negative - same change with depends_on blockcastd re-added
+        run: |
+          bash /tmp/probe.sh negative killed '    volumes:
+                - s303-probe:/run/s303-probe
+          volumes:
+            s303-probe: {}' readd

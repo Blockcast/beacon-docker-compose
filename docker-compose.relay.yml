@@ -87,8 +87,11 @@ x-managed: &managed
   restart: unless-stopped
   logging: *default-logging
   profiles: [managed]
-  depends_on:
-    - blockcastd
+  # No depends_on: blockcastd, here or on any service. compose_manager runs
+  # `up -d <svc>` from INSIDE blockcastd; with that edge, any change to
+  # blockcastd's own block makes compose recreate blockcastd as a diverged
+  # dependency, which stops the container compose is running in and leaves
+  # blockcastd Exited(137) (BLO-51855, .github/workflows/blockcastd-self-recreate.yml).
 
 # -- Services ----------------------------------------------------------------
 
@@ -191,8 +194,6 @@ services:
     # ~282s against a 1h interval. Re-check this if that call ever grows a
     # deadline shorter than ~285s.
     restart: on-failure:13
-    depends_on:
-      - blockcastd
     networks:
       - relay
     # Minimal capabilities instead of full privileged (set CACHE_INIT_PRIVILEGED=true to override)
@@ -477,7 +478,6 @@ services:
       <<: *labels
       service.type: "traffic-router"
     depends_on:
-      - blockcastd
       - traffic-monitor
 
   # Traffic Monitor - Cache health monitoring (internal only)
