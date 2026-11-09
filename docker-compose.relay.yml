@@ -109,10 +109,6 @@ services:
     # resolvable from blockcastd without adding a proxy or scrape path.
     extra_hosts:
       - "cast:host-gateway"
-      # amt-relay is host-networked too; metricsd polls amt-relay:9191 (BLO-51838).
-      # Nothing listens there until amt-astats' Service303 is safe to enable on
-      # operator hosts (BLO-51855); until then the poll just fails.
-      - "amt-relay:host-gateway"
 
   # When relay cache is running, it aliases as "control-proxy" on the relay network.
   # When relay is NOT enabled (standalone control-proxy mode), the base control-proxy
