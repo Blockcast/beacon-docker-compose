@@ -1,0 +1,126 @@
+name: service303-bind
+
+# BLO-51855 AC3/AC4, measured on a real docker host (no operator host is
+# available to agents). amt-relay and cast are host-networked on gateways, so
+# whatever address their Service303 binds is exposed on every interface that
+# address lives on. So amt-relay serves Service303 on a unix socket in the
+# amt-s303 volume instead. This job brings amt-relay up from
+# docker-compose.relay.yml with the manifest's own env and checks:
+#   - blockcastd mounts amt-s303 and its registry points amt-relay at the socket
+#   - amt-relay opens no TCP Service303 listener (nothing on 9191)
+#   - uid 999 (blockcastd's user) on the volume gets GetServiceInfo grpc-status 0
+#   - StopService is refused (grpc-status 7) and the relay keeps running
+# and records cast's 50054 bind as found.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - docker-compose.yml
+      - docker-compose.relay.yml
+      - .github/workflows/service303-bind.yml
+  workflow_dispatch:
+    inputs:
+      amtr_tag:
+        description: blockcast/amtr tag (must contain linux-amt dba55def)
+        default: sha-dba55defbc686d89c1b5861521dbb6b345a317f5
+      cast_tag:
+        description: blockcast/cast tag
+        default: stable
+
+concurrency:
+  group: service303-bind-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bind:
+    # GitHub-hosted on purpose: a real VM with a real docker0, i.e. the same
+    # shape as an operator compose host. ARC pods are not.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AMTR_TAG: ${{ inputs.amtr_tag || 'sha-dba55defbc686d89c1b5861521dbb6b345a317f5' }}
+      CAST_TAG: ${{ inputs.cast_tag || 'stable' }}
+      FILES: -f docker-compose.yml -f docker-compose.relay.yml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: blockcastd mounts the socket volume and routes amt-relay to it
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.blockcast/certs"
+          docker compose $FILES --profile managed config --format json > /tmp/cfg.json
+          jq -e '.services.blockcastd.volumes | any(.source=="amt-s303" and .target=="/run/amt-s303")' /tmp/cfg.json
+          jq -e '.services["amt-relay"].volumes | any(.source=="amt-s303" and .target=="/app/data")' /tmp/cfg.json
+          jq -e '.services.blockcastd.environment.SERVICE_REGISTRY_ADDR_AMT_RELAY == "unix:///run/amt-s303/s303.sock"' /tmp/cfg.json
+          jq -e '.services["amt-relay"].environment.SERVICE303_ADDR == "unix:/app/data/s303.sock"' /tmp/cfg.json
+
+      - name: Start amt-relay from the manifest
+        run: |
+          set -euo pipefail
+          # On a node blockcastd mounts the volume first, at a path its image
+          # lacks. Do the same here so the ownership amt-relay (uid 999) ends
+          # up with is the one the field gets.
+          VOL="$(jq -r .name /tmp/cfg.json)_amt-s303"
+          IMAGE_VERSION="$AMTR_TAG" docker compose $FILES --profile managed up --no-start --no-deps amt-relay   # creates the volume as declared
+          docker run -d --name first-mounter -v "$VOL:/run/amt-s303" alpine sleep 600
+          IMAGE_VERSION="$AMTR_TAG" docker compose $FILES --profile managed up -d --no-deps amt-relay
+          docker image inspect "blockcast/amtr:$AMTR_TAG" --format 'image {{index .RepoDigests 0}}'
+          echo "VOL=$VOL" >> "$GITHUB_ENV"
+          for i in $(seq 1 90); do
+            docker run --rm -v "$VOL:/s:ro" alpine test -S /s/s303.sock && break
+            sleep 2
+          done
+          docker run --rm -v "$VOL:/s:ro" alpine ls -lan /s
+          docker logs relay-amt-relay 2>&1 | grep -iE 'service303|COMBINED' || true
+
+      - name: No TCP Service303 listener
+        run: |
+          set -euo pipefail
+          sudo ss -ltnp | tee /tmp/ss
+          if grep -q ':9191 ' /tmp/ss; then echo "FAIL: something listens on 9191"; exit 1; fi
+
+      - name: Socket works for uid 999; StopService refused
+        run: |
+          set -euo pipefail
+          printf '\0\0\0\0\0' > /tmp/void   # gRPC frame of an empty magma.orc8r.Void
+          call() {
+            docker run --rm --user 999:999 -v "$VOL:/run/amt-s303" \
+              -v /tmp/void:/void:ro curlimages/curl:8.10.1 \
+              -sS -v --http2-prior-knowledge --unix-socket /run/amt-s303/s303.sock -o /dev/null \
+              -H 'content-type: application/grpc' -H 'te: trailers' \
+              --data-binary @/void "http://localhost/magma.orc8r.Service303/$1" 2>&1 \
+              | grep -i 'grpc-status' | tail -1
+          }
+          info=$(call GetServiceInfo); echo "GetServiceInfo: $info"
+          echo "$info" | grep -q 'grpc-status: 0' || { echo "FAIL: GetServiceInfo"; exit 1; }
+          stop=$(call StopService); echo "StopService: $stop"
+          echo "$stop" | grep -q 'grpc-status: 7' || { echo "FAIL: StopService not refused"; exit 1; }
+          sleep 3
+          [ "$(docker inspect -f '{{.State.Running}}' relay-amt-relay)" = true ]
+          docker run --rm -v "$VOL:/s:ro" alpine test -S /s/s303.sock || { echo "FAIL: socket gone after StopService"; exit 1; }
+
+      - name: cast 50054 bind as shipped (record, do not gate)
+        if: always()
+        run: |
+          set -uo pipefail
+          docker compose $FILES --profile managed config --format json \
+            | jq -r '.services.cast.environment.CAST_SERVICE303_LISTEN_ADDR' | sed 's/^/manifest CAST_SERVICE303_LISTEN_ADDR=/'
+          IMAGE_VERSION="$CAST_TAG" docker compose $FILES --profile managed up -d --no-deps cast || echo "cast: could not start"
+          for i in $(seq 1 30); do sudo ss -ltn | grep -q ':50054 ' && break; sleep 2; done
+          sudo ss -ltnp | grep ':50054 ' || echo "cast: no 50054 listener (live measurement unavailable; see manifest value above)"
+          docker logs cast 2>&1 | tail -20 || true
+
+      - name: amt-relay logs
+        if: failure()
+        run: |
+          docker logs relay-amt-relay 2>&1 | tail -80
+          docker run --rm --entrypoint sh "blockcast/amtr:$AMTR_TAG" -c 'id; ls -ldn /app /app/data /var/lib' || true
+          docker volume ls
+          docker run --rm -v "${VOL:-x}:/d" alpine ls -lan /d || true
+
