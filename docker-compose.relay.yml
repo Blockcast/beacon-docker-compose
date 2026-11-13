@@ -21,6 +21,8 @@ x-relay-env: &relay-env
   TO_URL: ${TO_URL:-https://to.infra.blockcast.net}
   TLD_DOMAIN: ${TLD_DOMAIN:-test.bcast.id}
   CDN_NAME: ${CDN_NAME:-public}
+  GATEWAY_LISTENER_IPV4: ${GATEWAY_LISTENER_IPV4:-}
+  GATEWAY_LISTENER_IPV6: ${GATEWAY_LISTENER_IPV6:-}
   # Default cdnilog → blockcastd over plaintext gRPC. Override CDNILOG_INSECURE
   # to "false" only if a TLS endpoint is in use.
   #

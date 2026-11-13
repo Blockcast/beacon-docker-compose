@@ -25,6 +25,9 @@ x-service: &service
   restart: always
   stop_grace_period: 30s
   logging: *default-logging
+  environment:
+    GATEWAY_LISTENER_IPV4: ${GATEWAY_LISTENER_IPV4:-}
+    GATEWAY_LISTENER_IPV6: ${GATEWAY_LISTENER_IPV6:-}
   # Compose opts into root so entrypoint can chown mounted volumes and match the
   # Docker socket GID before dropping privileges. The image itself defaults to
   # USER 999:999 for Kubernetes and generic container runtime use.
@@ -58,6 +61,8 @@ services:
     # CERTIFIER_ACME_ENDPOINT are then both required — the scheduler refuses to
     # start without them rather than looping against an unsatisfiable config.
     environment:
+      GATEWAY_LISTENER_IPV4: ${GATEWAY_LISTENER_IPV4:-}
+      GATEWAY_LISTENER_IPV6: ${GATEWAY_LISTENER_IPV6:-}
       GATEWAY_CERTBOT_ENABLED: ${GATEWAY_CERTBOT_ENABLED:-false}
       LE_ZONE: ${LE_ZONE:-}
       CERTIFIER_ACME_ENDPOINT: ${CERTIFIER_ACME_ENDPOINT:-}
