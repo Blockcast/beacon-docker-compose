@@ -25,9 +25,13 @@ x-service: &service
   restart: always
   stop_grace_period: 30s
   logging: *default-logging
-  # No "user:" — entrypoint runs as root, chowns mounted volumes to match the
-  # container's blockcast user, then drops privileges via gosu.
-  # This handles arbitrary host UIDs (the host may not even have a blockcast user).
+  # The image defaults to USER 999:999 (non-root, for Kubernetes). Compose must
+  # opt into root so the entrypoint can chown the bind-mounted dirs (dockerd
+  # creates missing ones root:root) and match the host docker-socket GID, then
+  # drop to the blockcast user via gosu. Without this a fresh install
+  # crash-loops on "open /etc/snowflake/snowflake: permission denied" (BLO-57073).
+  # Same as magma cdn/gateway/docker/docker-compose.yml.
+  user: "0:0"
   group_add:
     - ${DOCKER_GID:-999}
   volumes:
