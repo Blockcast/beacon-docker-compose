@@ -19,7 +19,7 @@ docker compose up -d
 
 Get Node info by running:
 ```bash
-docker compose exec blockcastd blockcastd init
+docker compose exec -u blockcast blockcastd blockcastd init
 ```
 
 Register using the provided URL or by using the Hardware ID and Challenge Key manually.
