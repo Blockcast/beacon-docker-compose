@@ -18,7 +18,10 @@ x-logging: &default-logging
 
 # Common environment for Traffic Ops-connected services
 x-relay-env: &relay-env
-  TO_URL: ${TO_URL:-https://to.infra.blockcast.net}
+  # TO_URL defaults to the TO origin, not CDN-fronted to.infra: the CDN hop
+  # re-originates TLS and drops the gateway client cert, so cert logins fail
+  # with "username and password are required" (BLO-57700 / BLO-57764).
+  TO_URL: ${TO_URL:-https://to-origin.infra.blockcast.net}
   TLD_DOMAIN: ${TLD_DOMAIN:-test.bcast.id}
   CDN_NAME: ${CDN_NAME:-public}
   # Default cdnilog → blockcastd over plaintext gRPC. Override CDNILOG_INSECURE
@@ -427,7 +430,7 @@ services:
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
     environment:
-      CAST_TO_URL: ${TO_URL:-https://to.infra.blockcast.net}
+      CAST_TO_URL: ${TO_URL:-https://to-origin.infra.blockcast.net}
       CAST_TO_CERT: ${CAST_TO_CERT:-/var/opt/magma/certs/gateway.crt}
       CAST_TO_KEY: ${CAST_TO_KEY:-/var/opt/magma/certs/gateway.key}
       # The gateway's TO endpoint is terminated by the internal ATS
@@ -466,7 +469,7 @@ services:
       - tr-db:/opt/traffic_router/db
       - ${MAXMIND_DB_PATH:-/var/opt/magma/maxmind}:/var/opt/magma/maxmind:ro
     environment:
-      tr_traffic_ops_url: ${TO_URL:-https://to.infra.blockcast.net}
+      tr_traffic_ops_url: ${TO_URL:-https://to-origin.infra.blockcast.net}
       tr_cdn_name: ${CDN_NAME:-public}
       tr_traffic_ops_insecure: "false"
       tr_traffic_ops_client_cert_file: "/var/opt/magma/certs/gateway.crt"
@@ -499,7 +502,7 @@ services:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
       - ${HOME}/.blockcast/certs:/etc/pki/tls:ro
     environment:
-      TO_URL: ${TO_URL:-https://to.infra.blockcast.net}
+      TO_URL: ${TO_URL:-https://to-origin.infra.blockcast.net}
       TO_CDN_NAME: ${CDN_NAME:-public}
       TO_INSECURE: "false"
       TO_CLIENT_CERT_FILE: "/var/opt/magma/certs/gateway.crt"
