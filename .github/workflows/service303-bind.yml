@@ -114,6 +114,12 @@ jobs:
         run: |
           set -euo pipefail
           CVOL="$(jq -r .name /tmp/cfg.json)_cast-s303"
+          # Throwaway gateway cert: without one cast exits ~1s after binding,
+          # before a probe can land. Readable by cast's uid 999.
+          C="$HOME/.blockcast/certs"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=ci-gw" \
+            -keyout "$C/gateway.key" -out "$C/gateway.crt" 2>/dev/null
+          chmod 0644 "$C/gateway.key" "$C/gateway.crt"
           IMAGE_VERSION="$CAST_TAG" docker compose $FILES --profile managed up -d --no-deps cast
           docker image inspect "blockcast/cast:$CAST_TAG" --format 'image {{index .RepoDigests 0}}'
           printf '\0\0\0\0\0' > /tmp/void
