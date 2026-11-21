@@ -115,10 +115,13 @@ services:
     # amt-relay's Service303 is a unix socket on a shared volume, so no TCP
     # port is opened on the (host-networked) relay (BLO-51855). Needs a gateway
     # image with magma#2697 (SERVICE_REGISTRY_ADDR_<SVC>).
+    # cast's likewise (BLO-53084); needs a cast image with pim-multicast-gateway#4536.
     environment:
       SERVICE_REGISTRY_ADDR_AMT_RELAY: unix:///run/amt-s303/s303.sock
+      SERVICE_REGISTRY_ADDR_CAST: unix:///run/cast-s303/s303.sock
     volumes:
       - amt-s303:/run/amt-s303
+      - cast-s303:/run/cast-s303
 
   # When relay cache is running, it aliases as "control-proxy" on the relay network.
   # When relay is NOT enabled (standalone control-proxy mode), the base control-proxy
@@ -418,8 +421,10 @@ services:
   # ==========================================================================
 
   # Cast - publisher orchestrator and native Magma Service303 endpoint.
-  # Host networking is required for the multicast egress path. blockcastd
-  # reaches GetMetrics at cast:50054 through the host-gateway alias above.
+  # Host networking is required for the multicast egress path, so Service303
+  # is a unix socket on the cast-s303 volume, never a TCP bind on every host
+  # interface (BLO-53084). A bad address or missing volume only disables
+  # Service303; cast keeps publishing.
   cast:
     <<: *managed
     image: ${DOCKER_REGISTRY:-blockcast/}cast:${IMAGE_VERSION:-stable}
@@ -429,6 +434,7 @@ services:
     command: ["publish"]
     volumes:
       - ${HOME}/.blockcast/certs:/var/opt/magma/certs:ro
+      - cast-s303:/run/cast-s303
     environment:
       CAST_TO_URL: ${TO_URL:-https://to-origin.infra.blockcast.net}
       CAST_TO_CERT: ${CAST_TO_CERT:-/var/opt/magma/certs/gateway.crt}
@@ -440,7 +446,7 @@ services:
       CAST_TLS_CERT: ${CAST_TLS_CERT:-/var/opt/magma/certs/gateway.crt}
       CAST_TLS_KEY: ${CAST_TLS_KEY:-/var/opt/magma/certs/gateway.key}
       CAST_HOST_NETWORK: "true"
-      CAST_SERVICE303_LISTEN_ADDR: ${CAST_SERVICE303_LISTEN_ADDR:-0.0.0.0:50054}
+      CAST_SERVICE303_LISTEN_ADDR: ${CAST_SERVICE303_LISTEN_ADDR:-unix:/run/cast-s303/s303.sock}
       CAST_RESTART_ON_FAILURE: ${CAST_RESTART_ON_FAILURE:-true}
       CAST_RESTART_DELAY: ${CAST_RESTART_DELAY:-5}
       CAST_MAX_RESTARTS: ${CAST_MAX_RESTARTS:-0}
@@ -659,6 +665,12 @@ volumes:
   # amt-relay and blockcastd), so ownership does not depend on which container
   # mounts it first, and no stale socket survives a reboot.
   amt-s303:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=999,gid=999,mode=0750,size=1m
+  # cast's Service303 socket (BLO-53084), same shape as amt-s303.
+  cast-s303:
     driver_opts:
       type: tmpfs
       device: tmpfs

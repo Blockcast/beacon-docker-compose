@@ -10,7 +10,8 @@ name: service303-bind
 #   - amt-relay opens no TCP Service303 listener (nothing on 9191)
 #   - uid 999 (blockcastd's user) on the volume gets GetServiceInfo grpc-status 0
 #   - StopService is refused (grpc-status 7) and the relay keeps running
-# and records cast's 50054 bind as found.
+# and the same for cast on the cast-s303 volume (BLO-53084): no TCP 50054
+# listener, GetServiceInfo grpc-status 0 for uid 999.
 
 on:
   pull_request:
@@ -59,6 +60,10 @@ jobs:
           jq -e '.services["amt-relay"].volumes | any(.source=="amt-s303" and .target=="/app/data")' /tmp/cfg.json
           jq -e '.services.blockcastd.environment.SERVICE_REGISTRY_ADDR_AMT_RELAY == "unix:///run/amt-s303/s303.sock"' /tmp/cfg.json
           jq -e '.services["amt-relay"].environment.SERVICE303_ADDR == "unix:/app/data/s303.sock"' /tmp/cfg.json
+          jq -e '.services.blockcastd.volumes | any(.source=="cast-s303" and .target=="/run/cast-s303")' /tmp/cfg.json
+          jq -e '.services.cast.volumes | any(.source=="cast-s303" and .target=="/run/cast-s303")' /tmp/cfg.json
+          jq -e '.services.blockcastd.environment.SERVICE_REGISTRY_ADDR_CAST == "unix:///run/cast-s303/s303.sock"' /tmp/cfg.json
+          jq -e '.services.cast.environment.CAST_SERVICE303_LISTEN_ADDR == "unix:/run/cast-s303/s303.sock"' /tmp/cfg.json
 
       - name: Start amt-relay from the manifest
         run: |
@@ -105,16 +110,34 @@ jobs:
           [ "$(docker inspect -f '{{.State.Running}}' relay-amt-relay)" = true ]
           docker run --rm -v "$VOL:/s:ro" alpine test -S /s/s303.sock || { echo "FAIL: socket gone after StopService"; exit 1; }
 
-      - name: cast 50054 bind as shipped (record, do not gate)
-        if: always()
+      - name: cast serves Service303 on the socket, not on 50054
         run: |
-          set -uo pipefail
-          docker compose $FILES --profile managed config --format json \
-            | jq -r '.services.cast.environment.CAST_SERVICE303_LISTEN_ADDR' | sed 's/^/manifest CAST_SERVICE303_LISTEN_ADDR=/'
-          IMAGE_VERSION="$CAST_TAG" docker compose $FILES --profile managed up -d --no-deps cast || echo "cast: could not start"
-          for i in $(seq 1 30); do sudo ss -ltn | grep -q ':50054 ' && break; sleep 2; done
-          sudo ss -ltnp | grep ':50054 ' || echo "cast: no 50054 listener (live measurement unavailable; see manifest value above)"
-          docker logs cast 2>&1 | tail -20 || true
+          set -euo pipefail
+          CVOL="$(jq -r .name /tmp/cfg.json)_cast-s303"
+          IMAGE_VERSION="$CAST_TAG" docker compose $FILES --profile managed up -d --no-deps cast
+          docker image inspect "blockcast/cast:$CAST_TAG" --format 'image {{index .RepoDigests 0}}'
+          printf '\0\0\0\0\0' > /tmp/void
+          # cast has no TO here and may restart; Service303 binds before TO
+          # login, so retry until a call lands on a live socket.
+          info=""
+          for i in $(seq 1 45); do
+            info=$(docker run --rm --user 999:999 -v "$CVOL:/run/cast-s303" \
+              -v /tmp/void:/void:ro curlimages/curl:8.10.1 \
+              -sS -v --http2-prior-knowledge --unix-socket /run/cast-s303/s303.sock -o /dev/null \
+              -H 'content-type: application/grpc' -H 'te: trailers' \
+              --data-binary @/void "http://localhost/magma.orc8r.Service303/GetServiceInfo" 2>&1 \
+              | grep -i 'grpc-status' | tail -1 || true)
+            echo "$info" | grep -q 'grpc-status: 0' && break
+            sleep 2
+          done
+          echo "cast GetServiceInfo: $info"
+          echo "$info" | grep -q 'grpc-status: 0' || { echo "FAIL: cast GetServiceInfo over the socket"; docker logs cast 2>&1 | tail -40; exit 1; }
+          sudo ss -ltnp | tee /tmp/ss-cast
+          if grep -q ':50054 ' /tmp/ss-cast; then echo "FAIL: something listens on 50054"; exit 1; fi
+
+      - name: cast logs
+        if: failure()
+        run: docker logs cast 2>&1 | tail -80 || true
 
       - name: amt-relay logs
         if: failure()
